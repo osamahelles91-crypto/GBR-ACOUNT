@@ -148,7 +148,7 @@ fun InventoryPanel(viewModel: GbrViewModel) {
 
     BackHandler(enabled = !isWarehouseRole) { viewModel.showSegment(null) }
 
-    val titles = listOf("الأرصدة", "بطاقة الصنف", "الاستلام والشراء", "الدفعات وFEFO", "الإنتاج والتوفر", "المنتج التام", "البيع والتسليم", "الجرد الدوري", "التكلفة", "إعداد المواد", "الموردون والمواقع", "التقييم وABC", "الكتالوج")
+    val titles = listOf("الأرصدة", "بطاقة الصنف", "الاستلام والشراء", "الدفعات وFEFO", "الإنتاج والتوفر", "المنتج التام", "البيع والتسليم", "الجرد الدوري", "التكلفة", "إعداد المواد", "الموردون والمواقع", "التقييم وABC", "التخطيط", "المؤشرات", "الكتالوج")
 
     Scaffold(
         topBar = {
@@ -190,6 +190,8 @@ fun InventoryPanel(viewModel: GbrViewModel) {
                     9 -> InventorySetupTab(vm, rows, canEdit)
                     10 -> InventoryPartiesTab(vm, canEdit)
                     11 -> ReportsTab(vm, rows)
+                    12 -> PlanningTab(vm, canEdit)
+                    13 -> KpiTab(vm)
                     else -> com.example.MaterialsPanel(viewModel = viewModel)
                 }
             }

@@ -6,6 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.InventoryIds
 import com.example.data.InventoryItemProfile
+import com.example.data.InventoryPlanning
+import com.example.data.PlanRow
+import com.example.data.MrpRow
+import com.example.data.Kpis
+import com.example.data.DemandStats
+import com.example.data.Formulation
+import com.example.data.FormulationItem
 import com.example.data.InventoryCount
 import com.example.data.InventoryCountLine
 import com.example.data.InventoryPoLine
@@ -598,6 +605,161 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
     fun cancelCount(countId: String) {
         viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.cancelCount(getApplication(), countId)) }
     }
+
+    // ---------------- المرحلة 7: التخطيط والمؤشرات ----------------
+
+    private val planPrefs = application.getSharedPreferences("inv_planning", android.content.Context.MODE_PRIVATE)
+
+    /** تكلفة إصدار الطلب الواحد (K) بالعملة، ونسبة تكلفة الاحتفاظ السنوية % (H = النسبة × سعر الوحدة). */
+    val orderCost = MutableStateFlow(planPrefs.getFloat("orderCost", 0f).toDouble())
+    val holdPct = MutableStateFlow(planPrefs.getFloat("holdPct", 20f).toDouble())
+
+    fun savePlanSettings(k: Double, h: Double) {
+        planPrefs.edit().putFloat("orderCost", k.toFloat()).putFloat("holdPct", h.toFloat()).apply()
+        orderCost.value = k
+        holdPct.value = h
+    }
+
+    val formulations: StateFlow<List<Formulation>> =
+        gdao.getAllFormulations().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val formulationItems: StateFlow<List<FormulationItem>> =
+        gdao.getAllFormulationItems().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** الكمية المطلوبة ولم تُستلم بعد على أوامر شراء معتمدة (بوحدة الأساس). */
+    val onOrder: StateFlow<Map<String, Double>> =
+        combine(purchaseOrders, poLines, receivedByRef) { pos, lines, rec ->
+            val approved = pos.filter { it.status == "APPROVED" }.map { it.id }.toSet()
+            val out = HashMap<String, Double>()
+            for (l in lines) {
+                if (l.poId !in approved) continue
+                val rem = l.qtyOrdered - (rec["PO:" + l.poId + ":" + l.id] ?: 0L)
+                if (rem > 0L) out[l.itemId] = (out[l.itemId] ?: 0.0) + InventoryMath.toDisplay(rem)
+            }
+            out as Map<String, Double>
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    private val leadObs: StateFlow<Map<String, List<Double>>> =
+        combine(purchaseOrders, poLines, allMoves) { pos, lines, moves ->
+            val reversed = moves.mapNotNull { it.reversesMoveId }.toSet()
+            InventoryPlanning.leadObservations(pos, lines, moves.filter { it.moveId !in reversed })
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    private val demand: StateFlow<Map<String, DemandStats>> =
+        combine(gdao.getAllProductionOrders(), gdao.getAllProductionOrderItems()) { orders, items ->
+            InventoryPlanning.demandByItem(orders, items, System.currentTimeMillis())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    private fun availMap(stock: List<StockRow>): Map<String, Double> =
+        stock.filter { it.hasMoves }.associate { it.item.id to maxOf(0.0, it.qtyDisplay) }
+
+    /** جدول التخطيط: ROP/SS/EOQ/تغطية/اقتراح الطلب لكل مادة لها استهلاك مسجَّل. */
+    val planRows: StateFlow<List<PlanRow>> =
+        combine(listOf(materials, profiles, stockRows, onOrder, demand, leadObs, orderCost, holdPct)) { a ->
+            InventoryPlanning.plan(
+                a[0] as List<RawMaterial>, a[1] as Map<String, InventoryItemProfile>, availMap(a[2] as List<StockRow>),
+                a[3] as Map<String, Double>, a[4] as Map<String, DemandStats>, a[5] as Map<String, List<Double>>,
+                a[6] as Double, a[7] as Double
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** احتياج صافٍ لسلة دفعات مخططة (تركيبة، كجم). needAfterDays: بعد كم يوم تلزم المواد. */
+    fun runMrp(basket: List<Pair<String, Double>>, needAfterDays: Int): List<MrpRow> {
+        val obs = leadObs.value
+        val profs = profiles.value
+        val leads = HashMap<String, Double?>()
+        for (m in materials.value) {
+            val o = obs[m.id].orEmpty()
+            val pl = profs[m.id]?.leadTimeDays ?: 0
+            leads[m.id] = when {
+                o.size >= InventoryPlanning.MIN_LEAD_OBS -> o.average()
+                pl > 0 -> pl.toDouble()
+                o.isNotEmpty() -> o.average()
+                else -> null
+            }
+        }
+        return InventoryPlanning.mrp(basket, formulationItems.value, materials.value, profs, availMap(stockRows.value), onOrder.value, leads, needAfterDays)
+    }
+
+    /** مؤشرات الأداء: كلها مشتقة من الدفتر والأوامر والجرد؛ لا قيم مدخلة يدوياً. */
+    val kpis: StateFlow<Kpis> =
+        combine(listOf(stockRows, allMoves, lots, lotBalances, counts, countLines, fgLots, gdao.getAllProductionOrders(), gdao.getAllProductionOrderItems())) { a ->
+            val stock = a[0] as List<StockRow>
+            val moves = a[1] as List<StockMove>
+            val lotList = a[2] as List<StockLot>
+            val bal = a[3] as List<LotLocQty>
+            val cs = a[4] as List<InventoryCount>
+            val cls = a[5] as List<InventoryCountLine>
+            val fg = a[6] as List<FgLotRow>
+            val orders = a[7] as List<com.example.data.ProductionOrder>
+            val oitems = a[8] as List<com.example.data.ProductionOrderItem>
+            val now = System.currentTimeMillis()
+            val day = InventoryPlanning.DAY
+            val reversed = moves.mapNotNull { it.reversesMoveId }.toSet()
+            val live = moves.filter { it.moveId !in reversed }
+
+            val rawValue = stock.filter { it.value > 0.0 }.sumOf { it.value }
+            val win = 90
+            val recent = orders.filter { it.status == "مكتمل" && now - InventoryPlanning.completionTs(it) <= win * day }.map { it.id }.toSet()
+            val consumption = oitems.filter { it.productionOrderId in recent }.sumOf { it.calculatedQuantity * it.rawMaterialPrice }
+            val perDay = consumption / win
+            val doi = if (perDay > 0.0) rawValue / perDay else null
+            val turnover = if (rawValue > 0.0 && consumption > 0.0) consumption * (365.0 / win) / rawValue else null
+
+            val lastIssue = HashMap<String, Long>()
+            for (m in live) if (m.type == "ISSUE") {
+                val ts = m.serverCreatedAt ?: m.clientCreatedAt
+                if (ts > (lastIssue[m.itemId] ?: 0L)) lastIssue[m.itemId] = ts
+            }
+            val firstMove = HashMap<String, Long>()
+            for (m in live) {
+                val ts = m.serverCreatedAt ?: m.clientCreatedAt
+                val cur = firstMove[m.itemId]
+                if (cur == null || ts < cur) firstMove[m.itemId] = ts
+            }
+            val stagnant = stock.filter { s ->
+                s.qtyStorage > 0L && !s.item.id.startsWith("FG|") &&
+                    now - (lastIssue[s.item.id] ?: firstMove[s.item.id] ?: now) > 180L * day
+            }
+
+            val physBal = HashMap<String, Long>()
+            for (b in bal) if (!b.locId.startsWith("V_")) physBal[b.lotId] = (physBal[b.lotId] ?: 0L) + b.qty
+            val rawLots = lotList.filter { !it.itemId.startsWith("FG|") && (physBal[it.id] ?: 0L) > 0L && it.expiryDate != null }
+            fun expiring(d: Int) = rawLots.count { it.expiryDate!! in 0..(now + d * day) }
+
+            val approvedIds = cs.filter { it.status == "APPROVED" }.map { it.id }.toSet()
+            val counted = cls.filter { it.countId in approvedIds && it.hasCount && it.expected > 0L }
+            val accuracy = if (counted.isEmpty()) null else
+                counted.count { kotlin.math.abs(it.counted - it.expected) <= it.expected * 0.02 } * 100.0 / counted.size
+
+            fun delay(relType: String, recType: String): Double? {
+                val rec = HashMap<String, Long>()
+                for (m in live) if (m.type == recType && m.lotId != null) rec[m.lotId] = m.serverCreatedAt ?: m.clientCreatedAt
+                val ds = live.filter { it.type == relType && it.lotId != null && rec.containsKey(it.lotId) }
+                    .map { ((it.serverCreatedAt ?: it.clientCreatedAt) - rec[it.lotId!!]!!) / 3_600_000.0 }
+                    .filter { it >= 0.0 }
+                return if (ds.isEmpty()) null else ds.average()
+            }
+
+            val yields = fg.filter { it.orderNumber.isNotBlank() && it.theoreticalKg > 0.0 }.groupBy { it.orderNumber }.map { it.value.first().orderYieldPct }
+            val lastDelivery = HashMap<String, Long>()
+            for (m in live) if (m.type == "FG_DELIVERY") {
+                val ts = m.serverCreatedAt ?: m.clientCreatedAt
+                if (ts > (lastDelivery[m.itemId] ?: 0L)) lastDelivery[m.itemId] = ts
+            }
+            val fgStag = fg.count { it.availCount > 0.0 && now - maxOf(it.lot.receivedAt, lastDelivery[it.lot.itemId] ?: 0L) > 90L * day }
+
+            Kpis(
+                rawValue = rawValue, consumptionValueWindow = consumption, windowDays = win, daysOfInventory = doi, turnover = turnover,
+                stagnantCount = stagnant.size, stagnantValue = stagnant.sumOf { maxOf(0.0, it.value) },
+                expiring30 = expiring(30), expiring60 = expiring(60), expiring90 = expiring(90),
+                negativeCount = stock.count { it.status == "NEGATIVE" },
+                countAccuracyPct = accuracy,
+                avgRawReleaseHours = delay("RELEASE", "RECEIPT"), avgFgReleaseHours = delay("FG_RELEASE", "FG_RECEIPT"),
+                avgYieldPct = if (yields.isEmpty()) null else yields.average(),
+                fgStagnantLots = fgStag
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Kpis(0.0, 0.0, 90, null, null, 0, 0.0, 0, 0, 0, 0, null, null, null, null, 0))
 
     fun syncNow() {
         InventorySync.uploadPendingAsync(getApplication())
