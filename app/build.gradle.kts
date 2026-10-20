@@ -68,6 +68,11 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
+// تصدير مخطط Room (exportSchema = true) إلى app/schemas لاستخدامه في اختبارات الترحيل؛ يُلزَم بإيداع الملفات الناتجة بعد أول بناء
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {

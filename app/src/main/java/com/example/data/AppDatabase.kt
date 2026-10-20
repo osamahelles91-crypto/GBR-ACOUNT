@@ -34,14 +34,23 @@ import androidx.room.RoomDatabase
         LabAttachment::class,
         FormulationReferenceSpecs::class,
         OperationalAlert::class,
-        RecycleBinItem::class
+        RecycleBinItem::class,
+        // وحدة المخزون (39): جداول جديدة فقط، بلا مساس بـ raw_materials
+        InventoryItemProfile::class,
+        UomConversion::class,
+        InventorySupplier::class,
+        StockLocation::class,
+        StockLot::class,
+        StockMove::class
     ],
-    version = 38, // 38: عمود productionLine في formulations (الخط التابع للتركيبة)
-    exportSchema = false
+    version = 39, // 39: جداول المخزون (دفتر حركات + سجل المادة + موردون + مواقع + دفعات) | 38: عمود productionLine في formulations
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     
     abstract fun gbrDao(): GbrDao
+
+    abstract fun inventoryDao(): InventoryDao
 
     companion object {
         @Volatile
@@ -51,6 +60,25 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_37_38 = object : androidx.room.migration.Migration(37, 38) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE formulations ADD COLUMN productionLine INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
+        // ترقية آمنة (بدون مسح): إنشاء جداول المخزون فقط. أي تعديل على هذه العبارات يجب أن يطابق الكيانات في InventoryEntities.kt حرفياً
+        // (الأنواع والقيود والفهارس) وإلا فشل تحقق Room وأُعيد إنشاء القاعدة محلياً.
+        private val MIGRATION_38_39 = object : androidx.room.migration.Migration(38, 39) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `inventory_item_profile` (`itemId` TEXT NOT NULL, `category` TEXT NOT NULL, `baseUom` TEXT NOT NULL, `densityKgPerL` REAL NOT NULL, `shelfLifeDays` INTEGER NOT NULL, `retestDays` INTEGER NOT NULL, `minLevel` REAL NOT NULL, `maxLevel` REAL NOT NULL, `reorderPoint` REAL NOT NULL, `safetyStock` REAL NOT NULL, `leadTimeDays` INTEGER NOT NULL, `moq` REAL NOT NULL, `hazardClass` TEXT NOT NULL, `flashPointC` REAL, `storageZone` TEXT NOT NULL, `weighTolerancePct` REAL NOT NULL, `vedClass` TEXT NOT NULL, `preferredSupplierId` TEXT, `sdsNote` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`itemId`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `uom_conversions` (`id` TEXT NOT NULL, `itemId` TEXT NOT NULL, `name` TEXT NOT NULL, `factorToBase` REAL NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_uom_conversions_itemId` ON `uom_conversions` (`itemId`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `inventory_suppliers` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `phone` TEXT NOT NULL, `notes` TEXT NOT NULL, `isApproved` INTEGER NOT NULL, `isActive` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `stock_locations` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `zone` TEXT NOT NULL, `parentId` TEXT, `isActive` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `stock_lots` (`id` TEXT NOT NULL, `itemId` TEXT NOT NULL, `lotNo` TEXT NOT NULL, `supplierLotNo` TEXT NOT NULL, `supplierId` TEXT, `mfgDate` INTEGER, `expiryDate` INTEGER, `status` TEXT NOT NULL, `receivedAt` INTEGER NOT NULL, `notes` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_stock_lots_itemId` ON `stock_lots` (`itemId`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `stock_moves` (`moveId` TEXT NOT NULL, `deviceId` TEXT NOT NULL, `deviceSeq` INTEGER NOT NULL, `itemId` TEXT NOT NULL, `lotId` TEXT, `fromLocId` TEXT NOT NULL, `toLocId` TEXT NOT NULL, `qtyBase` INTEGER NOT NULL, `uom` TEXT NOT NULL, `type` TEXT NOT NULL, `reasonCode` TEXT NOT NULL, `refDoc` TEXT NOT NULL, `reversesMoveId` TEXT, `unitCost` REAL, `costCurrency` TEXT NOT NULL, `userId` TEXT NOT NULL, `clientCreatedAt` INTEGER NOT NULL, `serverCreatedAt` INTEGER, `uploaded` INTEGER NOT NULL, PRIMARY KEY(`moveId`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_stock_moves_itemId` ON `stock_moves` (`itemId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_stock_moves_lotId` ON `stock_moves` (`lotId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_stock_moves_refDoc` ON `stock_moves` (`refDoc`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_stock_moves_uploaded` ON `stock_moves` (`uploaded`)")
             }
         }
 
@@ -64,14 +92,14 @@ abstract class AppDatabase : RoomDatabase() {
                         db.execSQL("PRAGMA foreign_keys = ON;")
                     }
                 })
-                .addMigrations(MIGRATION_37_38)
+                .addMigrations(MIGRATION_37_38, MIGRATION_38_39)
                 .fallbackToDestructiveMigration()
                 .build()
 
         // نسخة احتياطية من ملفات القاعدة قبل إعادة إنشائها (تبقى على الجهاز للطوارئ)
         private fun backupDbFiles(appCtx: Context) {
             try {
-                val dir = java.io.File(appCtx.filesDir, "db_backup_before_38").apply { mkdirs() }
+                val dir = java.io.File(appCtx.filesDir, "db_backup_before_recreate_${System.currentTimeMillis()}").apply { mkdirs() }
                 val main = appCtx.getDatabasePath(DB_NAME)
                 for (suffix in listOf("", "-wal", "-shm")) {
                     val f = java.io.File(main.path + suffix)
