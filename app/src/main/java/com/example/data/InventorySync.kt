@@ -37,6 +37,8 @@ object InventorySync {
     const val COL_PO_LINES = "inventory_po_lines"
     const val COL_SOS = "inventory_sales_orders"
     const val COL_SO_LINES = "inventory_so_lines"
+    const val COL_COUNTS = "inventory_counts"
+    const val COL_COUNT_LINES = "inventory_count_lines"
 
     private fun cloudReady(context: Context): Boolean {
         if (!DeviceSecurityManager.isCloudConfigured(context)) return false
@@ -173,6 +175,25 @@ object InventorySync {
                     ).awaitTask()
                     dao.markSoLineSynced(l.id, l.updatedAt)
                 } catch (e: Exception) { Log.e(TAG, "so line upload failed ${l.id}", e) }
+            }
+            for (c in dao.getPendingCounts()) {
+                try {
+                    db.collection(COL_COUNTS).document(c.id).set(
+                        hashMapOf<String, Any?>("id" to c.id, "number" to c.number, "scope" to c.scope, "status" to c.status,
+                            "createdBy" to c.createdBy, "countedBy" to c.countedBy, "approvedBy" to c.approvedBy,
+                            "createdAt" to c.createdAt, "updatedAt" to c.updatedAt), SetOptions.merge()
+                    ).awaitTask()
+                    dao.markCountSynced(c.id, c.updatedAt)
+                } catch (e: Exception) { Log.e(TAG, "count upload failed ${c.id}", e) }
+            }
+            for (l in dao.getPendingCountLines()) {
+                try {
+                    db.collection(COL_COUNT_LINES).document(l.id).set(
+                        hashMapOf<String, Any?>("id" to l.id, "countId" to l.countId, "itemId" to l.itemId, "hasCount" to l.hasCount,
+                            "counted" to l.counted, "expected" to l.expected, "updatedAt" to l.updatedAt), SetOptions.merge()
+                    ).awaitTask()
+                    dao.markCountLineSynced(l.id, l.updatedAt)
+                } catch (e: Exception) { Log.e(TAG, "count line upload failed ${l.id}", e) }
             }
         }
     }
@@ -499,6 +520,64 @@ object InventorySync {
                             )
                         }
                     } catch (e: Exception) { Log.e(TAG, "apply cloud so line ${d.id} failed", e) }
+                }
+            }
+        }
+
+        regs += db.collection(COL_COUNTS).addSnapshotListener { snaps, err ->
+            if (err != null || snaps == null) return@addSnapshotListener
+            scope.launch {
+                for (dc in snaps.documentChanges) {
+                    if (dc.type == DocumentChange.Type.REMOVED) continue
+                    val d = dc.document
+                    try {
+                        val cloudTs = lng(d, "updatedAt") ?: continue
+                        val local = dao.countOrNull(d.id)
+                        if (local == null || cloudTs > local.updatedAt) {
+                            dao.upsertCount(
+                                InventoryCount(
+                                    id = d.id,
+                                    number = d.getString("number") ?: "",
+                                    scope = d.getString("scope") ?: "ALL",
+                                    status = d.getString("status") ?: "OPEN",
+                                    createdBy = d.getString("createdBy") ?: "",
+                                    countedBy = d.getString("countedBy") ?: "",
+                                    approvedBy = d.getString("approvedBy") ?: "",
+                                    createdAt = lng(d, "createdAt") ?: cloudTs,
+                                    updatedAt = cloudTs,
+                                    isPending = false
+                                )
+                            )
+                        }
+                    } catch (e: Exception) { Log.e(TAG, "apply cloud count ${d.id} failed", e) }
+                }
+            }
+        }
+
+        regs += db.collection(COL_COUNT_LINES).addSnapshotListener { snaps, err ->
+            if (err != null || snaps == null) return@addSnapshotListener
+            scope.launch {
+                for (dc in snaps.documentChanges) {
+                    if (dc.type == DocumentChange.Type.REMOVED) continue
+                    val d = dc.document
+                    try {
+                        val cloudTs = lng(d, "updatedAt") ?: continue
+                        val local = dao.countLineOrNull(d.id)
+                        if (local == null || cloudTs > local.updatedAt) {
+                            dao.upsertCountLine(
+                                InventoryCountLine(
+                                    id = d.id,
+                                    countId = d.getString("countId") ?: continue,
+                                    itemId = d.getString("itemId") ?: continue,
+                                    hasCount = d.getBoolean("hasCount") ?: false,
+                                    counted = lng(d, "counted") ?: 0L,
+                                    expected = lng(d, "expected") ?: 0L,
+                                    updatedAt = cloudTs,
+                                    isPending = false
+                                )
+                            )
+                        }
+                    } catch (e: Exception) { Log.e(TAG, "apply cloud count line ${d.id} failed", e) }
                 }
             }
         }

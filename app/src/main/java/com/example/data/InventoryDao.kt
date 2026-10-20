@@ -323,4 +323,44 @@ interface InventoryDao {
             "AND NOT EXISTS (SELECT 1 FROM stock_moves r WHERE r.reversesMoveId = m.moveId)"
     )
     suspend fun getReturnedForRefLot(ref: String, lotId: String): Long
+
+    // ---------- المرحلة 6: الجرد الدوري ----------
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCount(c: InventoryCount)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCountLine(l: InventoryCountLine)
+
+    @Query("SELECT * FROM inventory_counts ORDER BY createdAt DESC")
+    fun observeCounts(): Flow<List<InventoryCount>>
+
+    @Query("SELECT * FROM inventory_count_lines")
+    fun observeCountLines(): Flow<List<InventoryCountLine>>
+
+    @Query("SELECT * FROM inventory_counts WHERE id = :id")
+    suspend fun countOrNull(id: String): InventoryCount?
+
+    @Query("SELECT * FROM inventory_count_lines WHERE id = :id")
+    suspend fun countLineOrNull(id: String): InventoryCountLine?
+
+    @Query("SELECT * FROM inventory_count_lines WHERE countId = :countId")
+    suspend fun getCountLines(countId: String): List<InventoryCountLine>
+
+    @Query("SELECT * FROM inventory_counts WHERE isPending = 1")
+    suspend fun getPendingCounts(): List<InventoryCount>
+
+    @Query("SELECT * FROM inventory_count_lines WHERE isPending = 1")
+    suspend fun getPendingCountLines(): List<InventoryCountLine>
+
+    @Query("UPDATE inventory_counts SET isPending = 0 WHERE id = :id AND updatedAt = :updatedAt")
+    suspend fun markCountSynced(id: String, updatedAt: Long)
+
+    @Query("UPDATE inventory_count_lines SET isPending = 0 WHERE id = :id AND updatedAt = :updatedAt")
+    suspend fun markCountLineSynced(id: String, updatedAt: Long)
+
+    @Query("SELECT * FROM inventory_counts")
+    suspend fun getAllCountsSync(): List<InventoryCount>
+
+    @Query("SELECT * FROM inventory_count_lines")
+    suspend fun getAllCountLinesSync(): List<InventoryCountLine>
 }

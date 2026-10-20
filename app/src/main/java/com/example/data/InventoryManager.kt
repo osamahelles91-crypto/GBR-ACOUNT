@@ -39,6 +39,7 @@ object InventoryTypes {
 
 /** أكواد أسباب التسوية (إلزامية). */
 val INVENTORY_REASONS: List<Pair<String, String>> = listOf(
+    "CYCLE_COUNT" to "جرد دوري",
     "COUNT_ERROR" to "خطأ عدّ",
     "SPILL" to "انسكاب",
     "EVAPORATION" to "تبخر",
@@ -681,6 +682,87 @@ object InventoryManager {
         write(ctx, newMove(ctx, lot.itemId, lotId, InventoryIds.LOC_FG_RET, to, qty, "EA", type,
             if (restock) "RETURN_RESTOCK" else "RETURN_SCRAP", reason.trim(), null, userId))
         return OpResult(true, if (restock) "أُعيدت العبوات إلى المخزن" else "سُجّلت كهالك")
+    }
+
+    // ======================= المرحلة 6: الجرد الدوري بالعدّ الأعمى =======================
+
+    private fun sameUser(a: String, b: String) = a.trim().equals(b.trim(), ignoreCase = true)
+
+    /** ينشئ جلسة جرد لمواد لها رصيد مسجَّل. العدّاد لا يرى الرصيد الدفتري. */
+    suspend fun createCount(ctx: Context, scope: String, itemIds: List<String>, userId: String): OpResult {
+        if (itemIds.isEmpty()) return OpResult(false, "لا مواد لها رصيد مسجَّل ضمن هذا النطاق")
+        val d = dao(ctx)
+        val df = java.text.SimpleDateFormat("yyMMdd", java.util.Locale.US)
+        val c = InventoryCount(number = "CNT-" + df.format(java.util.Date()) + "-" + randomDigits(3), scope = scope, createdBy = userId)
+        d.upsertCount(c)
+        for (id in itemIds.distinct()) d.upsertCountLine(InventoryCountLine(countId = c.id, itemId = id))
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "تم إنشاء جلسة الجرد ${c.number}")
+    }
+
+    suspend fun saveCountLine(ctx: Context, lineId: String, qtyDisplay: Double, userId: String): OpResult {
+        if (qtyDisplay < 0.0) return OpResult(false, "الكمية لا يمكن أن تكون سالبة")
+        val d = dao(ctx)
+        val line = d.countLineOrNull(lineId) ?: return OpResult(false, "سطر الجرد غير موجود")
+        val c = d.countOrNull(line.countId) ?: return OpResult(false, "الجلسة غير موجودة")
+        if (c.status != "OPEN") return OpResult(false, "الجلسة لم تعد مفتوحة للعدّ")
+        val now = System.currentTimeMillis()
+        d.upsertCountLine(line.copy(hasCount = true, counted = InventoryMath.toStorage(qtyDisplay), updatedAt = now, isPending = true))
+        if (!sameUser(c.countedBy, userId)) d.upsertCount(c.copy(countedBy = userId, updatedAt = now, isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "تم حفظ العدّ")
+    }
+
+    /** تسليم الجرد للاعتماد: يتطلب عدّ كل المواد، ويلتقط الرصيد الدفتري لحظتها. */
+    suspend fun submitCount(ctx: Context, countId: String, userId: String): OpResult {
+        val d = dao(ctx)
+        val c = d.countOrNull(countId) ?: return OpResult(false, "الجلسة غير موجودة")
+        if (c.status != "OPEN") return OpResult(false, "الجلسة ليست مفتوحة")
+        val lines = d.getCountLines(countId)
+        val missing = lines.count { !it.hasCount }
+        if (missing > 0) return OpResult(false, "بقي $missing مادة بلا عدّ")
+        val now = System.currentTimeMillis()
+        for (l in lines) {
+            d.upsertCountLine(l.copy(expected = maxOf(0L, d.getOnHandAt(l.itemId, InventoryIds.LOC_MAIN)), updatedAt = now, isPending = true))
+        }
+        d.upsertCount(c.copy(status = "SUBMITTED", countedBy = if (c.countedBy.isBlank()) userId else c.countedBy, updatedAt = now, isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "سُلّم الجرد للاعتماد")
+    }
+
+    /** اعتماد الجرد: معتمِد غير العدّاد. تُرحَّل الفروق كتسويات بمعرّف حتمي (لا تتكرر). */
+    suspend fun approveCount(ctx: Context, countId: String, approver: String): OpResult {
+        val d = dao(ctx)
+        val c = d.countOrNull(countId) ?: return OpResult(false, "الجلسة غير موجودة")
+        if (c.status != "SUBMITTED") return OpResult(false, "الجلسة ليست بانتظار الاعتماد")
+        if (sameUser(c.countedBy, approver)) return OpResult(false, "المعتمِد يجب أن يكون غير العدّاد")
+        ensureDefaults(ctx)
+        var posted = 0
+        var skipped = 0
+        for (l in d.getCountLines(countId)) {
+            val delta = l.counted - l.expected
+            if (delta == 0L) continue
+            val uom = d.getProfile(l.itemId)?.baseUom ?: "KG"
+            val qty = kotlin.math.abs(delta)
+            if (delta < 0L && qty > d.getOnHandAt(l.itemId, InventoryIds.LOC_MAIN)) { skipped++; continue }
+            val from = if (delta > 0L) InventoryIds.V_ADJUST else InventoryIds.LOC_MAIN
+            val to = if (delta > 0L) InventoryIds.LOC_MAIN else InventoryIds.V_ADJUST
+            val ok = write(ctx, newMove(ctx, l.itemId, null, from, to, qty, uom, InventoryTypes.ADJUSTMENT, "CYCLE_COUNT",
+                "CNT:" + c.number, null, approver, id = deterministicId("cnt|$countId|${l.itemId}")))
+            if (ok) posted++
+        }
+        d.upsertCount(c.copy(status = "APPROVED", approvedBy = approver, updatedAt = System.currentTimeMillis(), isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "اعتُمد الجرد: رُحّلت $posted تسوية" + (if (skipped > 0) "، وتعذّرت $skipped (النقص أكبر من الرصيد الحالي)" else ""))
+    }
+
+    suspend fun cancelCount(ctx: Context, countId: String): OpResult {
+        val d = dao(ctx)
+        val c = d.countOrNull(countId) ?: return OpResult(false, "الجلسة غير موجودة")
+        if (c.status != "OPEN" && c.status != "SUBMITTED") return OpResult(false, "لا يمكن إلغاء هذه الجلسة")
+        d.upsertCount(c.copy(status = "CANCELLED", updatedAt = System.currentTimeMillis(), isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "أُلغيت الجلسة")
     }
 
     // ---------- حفظ السجلات الرئيسة ----------

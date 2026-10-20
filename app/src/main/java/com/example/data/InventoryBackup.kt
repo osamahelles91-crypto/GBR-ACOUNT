@@ -8,7 +8,7 @@ import org.json.JSONObject
  * الحركات تُستورد بـ IGNORE (لا تُعدَّل أبداً)، والسجلات الرئيسة بالأحدث updatedAt.
  */
 object InventoryBackup {
-    val TABLES = listOf("inventory_item_profile", "uom_conversions", "inventory_suppliers", "stock_locations", "stock_lots", "stock_moves", "inventory_purchase_orders", "inventory_po_lines", "inventory_sales_orders", "inventory_so_lines")
+    val TABLES = listOf("inventory_item_profile", "uom_conversions", "inventory_suppliers", "stock_locations", "stock_lots", "stock_moves", "inventory_purchase_orders", "inventory_po_lines", "inventory_sales_orders", "inventory_so_lines", "inventory_counts", "inventory_count_lines")
 
     private fun JSONObject.putN(k: String, v: Any?) { put(k, v ?: JSONObject.NULL) }
     private fun JSONObject.strOrNull(k: String): String? = if (isNull(k) || !has(k)) null else optString(k)
@@ -92,6 +92,23 @@ object InventoryBackup {
                 a.put(JSONObject().apply {
                     put("id", l.id); put("soId", l.soId); put("sku", l.sku)
                     put("qtyOrdered", l.qtyOrdered); put("updatedAt", l.updatedAt)
+                })
+            }
+        }
+        out["inventory_counts"] = JSONArray().also { a ->
+            dao.getAllCountsSync().forEach { c ->
+                a.put(JSONObject().apply {
+                    put("id", c.id); put("number", c.number); put("scope", c.scope); put("status", c.status)
+                    put("createdBy", c.createdBy); put("countedBy", c.countedBy); put("approvedBy", c.approvedBy)
+                    put("createdAt", c.createdAt); put("updatedAt", c.updatedAt)
+                })
+            }
+        }
+        out["inventory_count_lines"] = JSONArray().also { a ->
+            dao.getAllCountLinesSync().forEach { l ->
+                a.put(JSONObject().apply {
+                    put("id", l.id); put("countId", l.countId); put("itemId", l.itemId); put("hasCount", l.hasCount)
+                    put("counted", l.counted); put("expected", l.expected); put("updatedAt", l.updatedAt)
                 })
             }
         }
@@ -263,6 +280,41 @@ object InventoryBackup {
                     dao.upsertSoLine(
                         InventorySoLine(id = id, soId = o.optString("soId", ""), sku = o.optString("sku", ""),
                             qtyOrdered = o.optLong("qtyOrdered", 0L),
+                            updatedAt = if (ts > 0L) ts else System.currentTimeMillis(), isPending = true)
+                    )
+                }
+            }
+        }
+        root.optJSONArray("inventory_counts")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val id = o.optString("id", "")
+                if (id.isBlank()) continue
+                val ts = o.optLong("updatedAt", 0L)
+                val local = dao.countOrNull(id)
+                if (local == null || ts > local.updatedAt) {
+                    dao.upsertCount(
+                        InventoryCount(id = id, number = o.optString("number", ""), scope = o.optString("scope", "ALL"),
+                            status = o.optString("status", "OPEN"), createdBy = o.optString("createdBy", ""),
+                            countedBy = o.optString("countedBy", ""), approvedBy = o.optString("approvedBy", ""),
+                            createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                            updatedAt = if (ts > 0L) ts else System.currentTimeMillis(), isPending = true)
+                    )
+                }
+            }
+        }
+        root.optJSONArray("inventory_count_lines")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val id = o.optString("id", "")
+                if (id.isBlank()) continue
+                val ts = o.optLong("updatedAt", 0L)
+                val local = dao.countLineOrNull(id)
+                if (local == null || ts > local.updatedAt) {
+                    dao.upsertCountLine(
+                        InventoryCountLine(id = id, countId = o.optString("countId", ""), itemId = o.optString("itemId", ""),
+                            hasCount = o.optBoolean("hasCount", false), counted = o.optLong("counted", 0L),
+                            expected = o.optLong("expected", 0L),
                             updatedAt = if (ts > 0L) ts else System.currentTimeMillis(), isPending = true)
                     )
                 }

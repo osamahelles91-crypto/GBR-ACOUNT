@@ -191,3 +191,33 @@ data class InventorySoLine(
     val updatedAt: Long = System.currentTimeMillis(),
     val isPending: Boolean = true
 )
+
+// ---------------- المرحلة 6: الجرد الدوري بالعدّ الأعمى ----------------
+
+/** جلسة جرد. الحالات: OPEN (عدّ)، SUBMITTED (بانتظار الاعتماد)، APPROVED، CANCELLED. العدّاد ≠ المعتمِد. */
+@Entity(tableName = "inventory_counts")
+data class InventoryCount(
+    @PrimaryKey val id: String = java.util.UUID.randomUUID().toString(),
+    val number: String,
+    val scope: String = "ALL",
+    val status: String = "OPEN",
+    val createdBy: String = "",
+    val countedBy: String = "",
+    val approvedBy: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val isPending: Boolean = true
+)
+
+/** سطر جرد لمادة: counted بوحدة التخزين، expected لقطة الرصيد الدفتري عند التسليم (لا يراها العدّاد قبله). */
+@Entity(tableName = "inventory_count_lines", indices = [Index("countId")])
+data class InventoryCountLine(
+    @PrimaryKey val id: String = java.util.UUID.randomUUID().toString(),
+    val countId: String,
+    val itemId: String,
+    val hasCount: Boolean = false,
+    val counted: Long = 0L,
+    val expected: Long = 0L,
+    val updatedAt: Long = System.currentTimeMillis(),
+    val isPending: Boolean = true
+)

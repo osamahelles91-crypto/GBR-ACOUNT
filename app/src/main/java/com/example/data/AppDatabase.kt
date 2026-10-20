@@ -45,9 +45,11 @@ import androidx.room.RoomDatabase
         InventoryPurchaseOrder::class,
         InventoryPoLine::class,
         InventorySalesOrder::class,
-        InventorySoLine::class
+        InventorySoLine::class,
+        InventoryCount::class,
+        InventoryCountLine::class
     ],
-    version = 41, // 41: طلبات البيع (inventory_sales_orders, inventory_so_lines) | // 40: أوامر الشراء (inventory_purchase_orders, inventory_po_lines) | // 39: جداول المخزون (دفتر حركات + سجل المادة + موردون + مواقع + دفعات) | 38: عمود productionLine في formulations
+    version = 42, // 42: الجرد الدوري (inventory_counts, inventory_count_lines) | // 41: طلبات البيع (inventory_sales_orders, inventory_so_lines) | // 40: أوامر الشراء (inventory_purchase_orders, inventory_po_lines) | // 39: جداول المخزون (دفتر حركات + سجل المادة + موردون + مواقع + دفعات) | 38: عمود productionLine في formulations
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -105,6 +107,15 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // ترقية آمنة: جدولا الجرد الدوري فقط (يجب أن تطابق الكيانات حرفياً)
+        private val MIGRATION_41_42 = object : androidx.room.migration.Migration(41, 42) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `inventory_counts` (`id` TEXT NOT NULL, `number` TEXT NOT NULL, `scope` TEXT NOT NULL, `status` TEXT NOT NULL, `createdBy` TEXT NOT NULL, `countedBy` TEXT NOT NULL, `approvedBy` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `inventory_count_lines` (`id` TEXT NOT NULL, `countId` TEXT NOT NULL, `itemId` TEXT NOT NULL, `hasCount` INTEGER NOT NULL, `counted` INTEGER NOT NULL, `expected` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_inventory_count_lines_countId` ON `inventory_count_lines` (`countId`)")
+            }
+        }
+
         private const val DB_NAME = "gbr_paints_production_db"
 
         private fun build(appCtx: Context): AppDatabase =
@@ -115,7 +126,7 @@ abstract class AppDatabase : RoomDatabase() {
                         db.execSQL("PRAGMA foreign_keys = ON;")
                     }
                 })
-                .addMigrations(MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41)
+                .addMigrations(MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41, MIGRATION_41_42)
                 .fallbackToDestructiveMigration()
                 .build()
 
