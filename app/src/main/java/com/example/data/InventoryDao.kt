@@ -172,4 +172,86 @@ interface InventoryDao {
 
     @Query("SELECT * FROM stock_lots WHERE id = :id")
     suspend fun lotOrNull(id: String): StockLot?
+
+    // ---------- المرحلة 2: الدفعات والاستلام وأوامر الشراء ----------
+    /** رصيد مادة في موقع محدد (حقيقي أو افتراضي). */
+    @Query(
+        "SELECT COALESCE(SUM(CASE WHEN toLocId = :locId THEN qtyBase ELSE 0 END) - " +
+            "SUM(CASE WHEN fromLocId = :locId THEN qtyBase ELSE 0 END), 0) FROM stock_moves WHERE itemId = :itemId"
+    )
+    suspend fun getOnHandAt(itemId: String, locId: String): Long
+
+    /** رصيد دفعة في موقع محدد. */
+    @Query(
+        "SELECT COALESCE(SUM(CASE WHEN toLocId = :locId THEN qtyBase ELSE 0 END) - " +
+            "SUM(CASE WHEN fromLocId = :locId THEN qtyBase ELSE 0 END), 0) FROM stock_moves WHERE lotId = :lotId"
+    )
+    suspend fun getLotOnHandAt(lotId: String, locId: String): Long
+
+    /** أرصدة الدفعات في المواقع الحقيقية. */
+    @Query(
+        "SELECT lotId, locId, SUM(q) AS qty FROM (" +
+            "SELECT lotId AS lotId, toLocId AS locId, qtyBase AS q FROM stock_moves WHERE lotId IS NOT NULL " +
+            "UNION ALL SELECT lotId AS lotId, fromLocId AS locId, -qtyBase AS q FROM stock_moves WHERE lotId IS NOT NULL" +
+            ") WHERE substr(locId,1,2) <> 'V_' GROUP BY lotId, locId"
+    )
+    fun observeLotBalances(): Flow<List<LotLocQty>>
+
+    /** المستلم فعلاً مقابل مرجع (أمر/سطر) بعد استبعاد الحركات المعكوسة. */
+    @Query(
+        "SELECT COALESCE(SUM(qtyBase), 0) FROM stock_moves m WHERE m.type = 'RECEIPT' AND m.refDoc = :ref " +
+            "AND NOT EXISTS (SELECT 1 FROM stock_moves r WHERE r.reversesMoveId = m.moveId)"
+    )
+    suspend fun getReceivedForRef(ref: String): Long
+
+    @Query("SELECT * FROM stock_lots WHERE id = :id")
+    suspend fun getLot(id: String): StockLot?
+
+    @Query("SELECT COUNT(*) FROM stock_lots WHERE lotNo LIKE :prefix || '%'")
+    suspend fun countLotsWithPrefix(prefix: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPo(po: InventoryPurchaseOrder)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPoLine(l: InventoryPoLine)
+
+    @Query("DELETE FROM inventory_po_lines WHERE id = :id")
+    suspend fun deletePoLine(id: String)
+
+    @Query("SELECT * FROM inventory_purchase_orders ORDER BY createdAt DESC")
+    fun observePos(): Flow<List<InventoryPurchaseOrder>>
+
+    @Query("SELECT * FROM inventory_po_lines")
+    fun observePoLines(): Flow<List<InventoryPoLine>>
+
+    @Query("SELECT * FROM inventory_purchase_orders WHERE id = :id")
+    suspend fun poOrNull(id: String): InventoryPurchaseOrder?
+
+    @Query("SELECT * FROM inventory_po_lines WHERE id = :id")
+    suspend fun poLineOrNull(id: String): InventoryPoLine?
+
+    @Query("SELECT * FROM inventory_po_lines WHERE poId = :poId")
+    suspend fun getPoLines(poId: String): List<InventoryPoLine>
+
+    @Query("SELECT COUNT(*) FROM inventory_purchase_orders")
+    suspend fun countPos(): Int
+
+    @Query("SELECT * FROM inventory_purchase_orders WHERE isPending = 1")
+    suspend fun getPendingPos(): List<InventoryPurchaseOrder>
+
+    @Query("SELECT * FROM inventory_po_lines WHERE isPending = 1")
+    suspend fun getPendingPoLines(): List<InventoryPoLine>
+
+    @Query("UPDATE inventory_purchase_orders SET isPending = 0 WHERE id = :id AND updatedAt = :updatedAt")
+    suspend fun markPoSynced(id: String, updatedAt: Long)
+
+    @Query("UPDATE inventory_po_lines SET isPending = 0 WHERE id = :id AND updatedAt = :updatedAt")
+    suspend fun markPoLineSynced(id: String, updatedAt: Long)
+
+    @Query("SELECT * FROM inventory_purchase_orders")
+    suspend fun getAllPosSync(): List<InventoryPurchaseOrder>
+
+    @Query("SELECT * FROM inventory_po_lines")
+    suspend fun getAllPoLinesSync(): List<InventoryPoLine>
 }

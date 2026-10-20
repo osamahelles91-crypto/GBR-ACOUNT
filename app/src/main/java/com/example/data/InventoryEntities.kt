@@ -129,3 +129,38 @@ data class LocQty(
     val locId: String,
     val qty: Long
 )
+
+/** رصيد دفعة في موقع. */
+data class LotLocQty(
+    val lotId: String,
+    val locId: String,
+    val qty: Long
+)
+
+// ---------------- المرحلة 2: أوامر الشراء ----------------
+
+/** أمر شراء بسيط. الحالات المخزَّنة: DRAFT, APPROVED, CLOSED, CANCELLED؛ «مستلم جزئياً/كلياً» تُشتق من الحركات. */
+@Entity(tableName = "inventory_purchase_orders", indices = [Index("supplierId")])
+data class InventoryPurchaseOrder(
+    @PrimaryKey val id: String = java.util.UUID.randomUUID().toString(),
+    val number: String,
+    val supplierId: String,
+    val status: String = "DRAFT",
+    val notes: String = "",
+    val createdBy: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val isPending: Boolean = true
+)
+
+/** سطر أمر شراء: الكمية المطلوبة بوحدة التخزين (غرام/ملّيلتر). */
+@Entity(tableName = "inventory_po_lines", indices = [Index("poId")])
+data class InventoryPoLine(
+    @PrimaryKey val id: String = java.util.UUID.randomUUID().toString(),
+    val poId: String,
+    val itemId: String,
+    val qtyOrdered: Long,
+    val unitPrice: Double = 0.0,
+    val updatedAt: Long = System.currentTimeMillis(),
+    val isPending: Boolean = true
+)

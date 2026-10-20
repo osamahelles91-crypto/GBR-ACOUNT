@@ -41,9 +41,11 @@ import androidx.room.RoomDatabase
         InventorySupplier::class,
         StockLocation::class,
         StockLot::class,
-        StockMove::class
+        StockMove::class,
+        InventoryPurchaseOrder::class,
+        InventoryPoLine::class
     ],
-    version = 39, // 39: جداول المخزون (دفتر حركات + سجل المادة + موردون + مواقع + دفعات) | 38: عمود productionLine في formulations
+    version = 40, // 40: أوامر الشراء (inventory_purchase_orders, inventory_po_lines) | // 39: جداول المخزون (دفتر حركات + سجل المادة + موردون + مواقع + دفعات) | 38: عمود productionLine في formulations
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -82,6 +84,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // ترقية آمنة: جدولا أوامر الشراء فقط (يجب أن تطابق الكيانات حرفياً)
+        private val MIGRATION_39_40 = object : androidx.room.migration.Migration(39, 40) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `inventory_purchase_orders` (`id` TEXT NOT NULL, `number` TEXT NOT NULL, `supplierId` TEXT NOT NULL, `status` TEXT NOT NULL, `notes` TEXT NOT NULL, `createdBy` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_inventory_purchase_orders_supplierId` ON `inventory_purchase_orders` (`supplierId`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `inventory_po_lines` (`id` TEXT NOT NULL, `poId` TEXT NOT NULL, `itemId` TEXT NOT NULL, `qtyOrdered` INTEGER NOT NULL, `unitPrice` REAL NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_inventory_po_lines_poId` ON `inventory_po_lines` (`poId`)")
+            }
+        }
+
         private const val DB_NAME = "gbr_paints_production_db"
 
         private fun build(appCtx: Context): AppDatabase =
@@ -92,7 +104,7 @@ abstract class AppDatabase : RoomDatabase() {
                         db.execSQL("PRAGMA foreign_keys = ON;")
                     }
                 })
-                .addMigrations(MIGRATION_37_38, MIGRATION_38_39)
+                .addMigrations(MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40)
                 .fallbackToDestructiveMigration()
                 .build()
 

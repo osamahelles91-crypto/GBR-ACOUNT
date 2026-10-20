@@ -6,6 +6,7 @@ import java.util.UUID
 /** معرّفات المواقع. المواقع الافتراضية تبدأ بـ V_ ولا تُحتسب مخزوناً فعلياً. */
 object InventoryIds {
     const val LOC_MAIN = "L_MAIN"
+    const val LOC_QUAR = "L_QUAR"
     const val V_OPENING = "V_OPENING"
     const val V_ADJUST = "V_ADJUST"
     const val V_SUPPLIER = "V_SUPPLIER"
@@ -19,6 +20,9 @@ object InventoryTypes {
     const val OPENING = "OPENING"
     const val ADJUSTMENT = "ADJUSTMENT"
     const val REVERSAL = "REVERSAL"
+    const val RECEIPT = "RECEIPT"
+    const val RELEASE = "RELEASE"
+    const val REJECT = "REJECT"
 }
 
 /** أكواد أسباب التسوية (إلزامية). */
@@ -164,9 +168,9 @@ object InventoryManager {
     /** يضمن وجود موقع «المخزن الرئيسي» (معرّف ثابت فلا يتكرر بين الأجهزة). */
     suspend fun ensureDefaults(ctx: Context) {
         val d = dao(ctx)
-        if (d.countLocations() == 0) {
-            d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_MAIN, name = "المخزن الرئيسي", zone = "GENERAL"))
-        }
+        // معرّفان ثابتان فلا يتكرران بين الأجهزة (insertIfAbsent)
+        d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_MAIN, name = "المخزن الرئيسي", zone = "GENERAL"))
+        d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_QUAR, name = "منطقة الحجر (بانتظار الفحص)", zone = "QUARANTINE"))
     }
 
     private suspend fun write(ctx: Context, move: StockMove): Boolean {
@@ -228,7 +232,7 @@ object InventoryManager {
         if (qty <= 0L) return OpResult(false, "الكمية صغيرة جداً")
         val d = dao(ctx)
         ensureDefaults(ctx)
-        val onHand = d.getOnHand(itemId)
+        val onHand = d.getOnHandAt(itemId, InventoryIds.LOC_MAIN)
         if (deltaDisplay < 0 && qty > onHand) {
             return OpResult(false, "النقص (${InventoryMath.toDisplay(qty)}) أكبر من الرصيد الحالي (${InventoryMath.toDisplay(onHand)})")
         }
@@ -245,9 +249,13 @@ object InventoryManager {
         val orig = d.getMove(moveId) ?: return OpResult(false, "الحركة غير موجودة")
         if (orig.type == InventoryTypes.REVERSAL) return OpResult(false, "لا يمكن عكس حركة عكسية")
         if (d.countReversalsOf(moveId) > 0) return OpResult(false, "هذه الحركة مُعكوسة مسبقاً")
-        val s = InventoryMath.signedQty(orig)
-        if (s > 0 && d.getOnHand(orig.itemId) < orig.qtyBase) {
-            return OpResult(false, "عكس هذه الحركة يجعل الرصيد سالباً")
+        if (orig.type == InventoryTypes.RELEASE || orig.type == InventoryTypes.REJECT) {
+            return OpResult(false, "لا تُعكس حركة الإفراج/الرفض: تغيّر حالة الدفعة. استخدم تسوية أو استلاماً جديداً")
+        }
+        // العكس يُخرج الكمية من موقع وصولها الأصلي؛ يجب أن يتسع رصيد ذلك الموقع (والدفعة إن وُجدت)
+        if (!InventoryIds.isVirtual(orig.toLocId)) {
+            val have = if (orig.lotId != null) d.getLotOnHandAt(orig.lotId, orig.toLocId) else d.getOnHandAt(orig.itemId, orig.toLocId)
+            if (have < orig.qtyBase) return OpResult(false, "عكس هذه الحركة يجعل الرصيد سالباً")
         }
         val ok = write(
             ctx,
@@ -256,6 +264,154 @@ object InventoryManager {
                 id = deterministicId("rev|$moveId"), reverses = moveId)
         )
         return if (ok) OpResult(true, "تم عكس الحركة") else OpResult(false, "هذه الحركة مُعكوسة مسبقاً")
+    }
+
+    // ======================= المرحلة 2: أوامر الشراء والاستلام والإفراج =======================
+
+    private fun randomDigits(n: Int): String = (1..n).map { ('0'..'9').random() }.joinToString("")
+
+    /** يُنشئ أمر شراء (مسودة). lines: (itemId, الكمية بوحدة الأساس، سعر الوحدة). */
+    suspend fun createPo(
+        ctx: Context, supplierId: String, notes: String, userId: String, lines: List<Triple<String, Double, Double>>
+    ): OpResult {
+        val d = dao(ctx)
+        val sup = d.supplierOrNull(supplierId) ?: return OpResult(false, "اختر مورداً")
+        if (!sup.isActive || !sup.isApproved) return OpResult(false, "المورد غير معتمد أو غير فعّال")
+        if (lines.isEmpty()) return OpResult(false, "أضف مادة واحدة على الأقل")
+        for ((_, q, pr) in lines) {
+            if (q <= 0.0) return OpResult(false, "كل الكميات يجب أن تكون أكبر من صفر")
+            if (pr < 0.0) return OpResult(false, "السعر لا يمكن أن يكون سالباً")
+        }
+        val df = java.text.SimpleDateFormat("yyMMdd", java.util.Locale.US)
+        val po = InventoryPurchaseOrder(
+            number = "PO-" + df.format(java.util.Date()) + "-" + randomDigits(3),
+            supplierId = supplierId, notes = notes.trim(), createdBy = userId
+        )
+        d.upsertPo(po)
+        for ((item, q, pr) in lines) {
+            d.upsertPoLine(InventoryPoLine(poId = po.id, itemId = item, qtyOrdered = InventoryMath.toStorage(q), unitPrice = pr))
+        }
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "تم إنشاء أمر الشراء ${po.number}")
+    }
+
+    /** انتقال حالة أمر الشراء: DRAFT→APPROVED، وأي حالة غير نهائية→CLOSED/CANCELLED. */
+    suspend fun setPoStatus(ctx: Context, poId: String, newStatus: String): OpResult {
+        val d = dao(ctx)
+        val po = d.poOrNull(poId) ?: return OpResult(false, "أمر الشراء غير موجود")
+        val ok = when (newStatus) {
+            "APPROVED" -> po.status == "DRAFT"
+            "CLOSED" -> po.status == "APPROVED"
+            "CANCELLED" -> po.status == "DRAFT" || po.status == "APPROVED"
+            else -> false
+        }
+        if (!ok) return OpResult(false, "لا يمكن نقل الأمر من ${po.status} إلى $newStatus")
+        if (newStatus == "CANCELLED") {
+            for (l in d.getPoLines(poId)) {
+                if (d.getReceivedForRef("PO:" + poId + ":" + l.id) > 0L) return OpResult(false, "يوجد استلام على هذا الأمر؛ أغلقه بدل إلغائه")
+            }
+        }
+        d.upsertPo(po.copy(status = newStatus, updatedAt = System.currentTimeMillis(), isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "تم تحديث حالة الأمر")
+    }
+
+    /**
+     * استلام مادة إلى منطقة الحجر بدفعة جديدة (لا تُسحب قبل الإفراج). poLineId اختياري: إن وُجد يُطابَق مع أمر شراء معتمد،
+     * ويُحظر تجاوز الكمية المطلوبة بأكثر من 10%. بلا أمر شراء يُسجَّل «DIRECT».
+     */
+    suspend fun receive(
+        ctx: Context, itemId: String, uom: String, qtyDisplay: Double, poLineId: String?, supplierId: String?,
+        supplierLotNo: String, mfgDate: Long?, expiryDate: Long?, unitCost: Double?, userId: String
+    ): OpResult {
+        if (qtyDisplay <= 0.0) return OpResult(false, "الكمية يجب أن تكون أكبر من صفر")
+        val qty = InventoryMath.toStorage(qtyDisplay)
+        if (qty <= 0L) return OpResult(false, "الكمية صغيرة جداً")
+        if (unitCost != null && unitCost < 0.0) return OpResult(false, "التكلفة لا يمكن أن تكون سالبة")
+        if (mfgDate != null && expiryDate != null && expiryDate <= mfgDate) return OpResult(false, "تاريخ الانتهاء قبل تاريخ الإنتاج")
+        val d = dao(ctx)
+        ensureDefaults(ctx)
+        var ref = "DIRECT"
+        var supId = supplierId
+        var cost = unitCost
+        if (poLineId != null) {
+            val line = d.poLineOrNull(poLineId) ?: return OpResult(false, "سطر أمر الشراء غير موجود")
+            val po = d.poOrNull(line.poId) ?: return OpResult(false, "أمر الشراء غير موجود")
+            if (po.status != "APPROVED") return OpResult(false, "أمر الشراء غير معتمد أو مغلق")
+            if (line.itemId != itemId) return OpResult(false, "المادة لا تطابق سطر أمر الشراء")
+            ref = "PO:" + po.id + ":" + line.id
+            val already = d.getReceivedForRef(ref)
+            val limit = line.qtyOrdered + line.qtyOrdered / 10
+            if (already + qty > limit) {
+                return OpResult(false, "الاستلام يتجاوز المطلوب بأكثر من 10% (المطلوب ${InventoryMath.toDisplay(line.qtyOrdered)}، المستلم سابقاً ${InventoryMath.toDisplay(already)})")
+            }
+            supId = po.supplierId
+            if (cost == null && line.unitPrice > 0.0) cost = line.unitPrice
+        }
+        if (supId != null) {
+            val sup = d.supplierOrNull(supId)
+            if (sup != null && (!sup.isApproved || !sup.isActive)) return OpResult(false, "المورد غير معتمد أو غير فعّال")
+        }
+        val now = System.currentTimeMillis()
+        val profile = d.getProfile(itemId)
+        var expiry = expiryDate
+        if (expiry == null && profile != null && profile.shelfLifeDays > 0) {
+            expiry = (mfgDate ?: now) + profile.shelfLifeDays * 86_400_000L
+        }
+        val df = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US)
+        val prefix = "L" + df.format(java.util.Date(now)) + "-"
+        val seq = d.countLotsWithPrefix(prefix) + 1
+        val lot = StockLot(
+            itemId = itemId, lotNo = prefix + seq.toString().padStart(3, '0'), supplierLotNo = supplierLotNo.trim(),
+            supplierId = supId, mfgDate = mfgDate, expiryDate = expiry, status = "QUARANTINE", receivedAt = now
+        )
+        d.upsertLot(lot)
+        val ok = write(
+            ctx,
+            newMove(ctx, itemId, lot.id, InventoryIds.V_SUPPLIER, InventoryIds.LOC_QUAR, qty, uom,
+                InventoryTypes.RECEIPT, "RECEIPT", ref, cost, userId)
+        )
+        if (!ok) return OpResult(false, "تعذّر تسجيل الاستلام")
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "تم الاستلام في الحجر — الدفعة ${lot.lotNo}")
+    }
+
+    /** إفراج دفعة من الحجر إلى المخزن الرئيسي. لا تُفرج دفعة منتهية الصلاحية. */
+    suspend fun releaseLot(ctx: Context, lotId: String, userId: String): OpResult {
+        val d = dao(ctx)
+        val lot = d.getLot(lotId) ?: return OpResult(false, "الدفعة غير موجودة")
+        if (lot.status != "QUARANTINE") return OpResult(false, "الدفعة ليست في الحجر")
+        if (lot.expiryDate != null && lot.expiryDate < System.currentTimeMillis()) return OpResult(false, "الدفعة منتهية الصلاحية ولا تُفرج")
+        val qty = d.getLotOnHandAt(lotId, InventoryIds.LOC_QUAR)
+        if (qty <= 0L) return OpResult(false, "لا رصيد لهذه الدفعة في الحجر")
+        val uom = d.getProfile(lot.itemId)?.baseUom ?: "KG"
+        val ok = write(
+            ctx,
+            newMove(ctx, lot.itemId, lotId, InventoryIds.LOC_QUAR, InventoryIds.LOC_MAIN, qty, uom,
+                InventoryTypes.RELEASE, "RELEASE", lot.lotNo, null, userId, id = deterministicId("rel|$lotId"))
+        )
+        d.upsertLot(lot.copy(status = "RELEASED", updatedAt = System.currentTimeMillis(), isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return if (ok) OpResult(true, "أُفرجت الدفعة ${lot.lotNo}") else OpResult(true, "الدفعة مُفرَج عنها مسبقاً")
+    }
+
+    /** رفض دفعة في الحجر (تخرج من المخزون الفعلي بسبب مكتوب). */
+    suspend fun rejectLot(ctx: Context, lotId: String, reason: String, userId: String): OpResult {
+        if (reason.isBlank()) return OpResult(false, "سبب الرفض إلزامي")
+        val d = dao(ctx)
+        val lot = d.getLot(lotId) ?: return OpResult(false, "الدفعة غير موجودة")
+        if (lot.status != "QUARANTINE") return OpResult(false, "الدفعة ليست في الحجر")
+        val qty = d.getLotOnHandAt(lotId, InventoryIds.LOC_QUAR)
+        if (qty <= 0L) return OpResult(false, "لا رصيد لهذه الدفعة في الحجر")
+        val uom = d.getProfile(lot.itemId)?.baseUom ?: "KG"
+        val ok = write(
+            ctx,
+            newMove(ctx, lot.itemId, lotId, InventoryIds.LOC_QUAR, InventoryIds.V_SCRAP, qty, uom,
+                InventoryTypes.REJECT, "QC_REJECT", reason.trim(), null, userId, id = deterministicId("rej|$lotId"))
+        )
+        d.upsertLot(lot.copy(status = "REJECTED", notes = (lot.notes + " | رفض: " + reason.trim()).trim(' ', '|'), updatedAt = System.currentTimeMillis(), isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return if (ok) OpResult(true, "رُفضت الدفعة ${lot.lotNo}") else OpResult(true, "الدفعة مرفوضة مسبقاً")
     }
 
     // ---------- حفظ السجلات الرئيسة ----------

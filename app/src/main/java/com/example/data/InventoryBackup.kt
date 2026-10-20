@@ -8,7 +8,7 @@ import org.json.JSONObject
  * الحركات تُستورد بـ IGNORE (لا تُعدَّل أبداً)، والسجلات الرئيسة بالأحدث updatedAt.
  */
 object InventoryBackup {
-    val TABLES = listOf("inventory_item_profile", "uom_conversions", "inventory_suppliers", "stock_locations", "stock_lots", "stock_moves")
+    val TABLES = listOf("inventory_item_profile", "uom_conversions", "inventory_suppliers", "stock_locations", "stock_lots", "stock_moves", "inventory_purchase_orders", "inventory_po_lines")
 
     private fun JSONObject.putN(k: String, v: Any?) { put(k, v ?: JSONObject.NULL) }
     private fun JSONObject.strOrNull(k: String): String? = if (isNull(k) || !has(k)) null else optString(k)
@@ -60,6 +60,22 @@ object InventoryBackup {
                     put("id", l.id); put("itemId", l.itemId); put("lotNo", l.lotNo); put("supplierLotNo", l.supplierLotNo)
                     putN("supplierId", l.supplierId); putN("mfgDate", l.mfgDate); putN("expiryDate", l.expiryDate)
                     put("status", l.status); put("receivedAt", l.receivedAt); put("notes", l.notes); put("updatedAt", l.updatedAt)
+                })
+            }
+        }
+        out["inventory_purchase_orders"] = JSONArray().also { a ->
+            dao.getAllPosSync().forEach { o ->
+                a.put(JSONObject().apply {
+                    put("id", o.id); put("number", o.number); put("supplierId", o.supplierId); put("status", o.status)
+                    put("notes", o.notes); put("createdBy", o.createdBy); put("createdAt", o.createdAt); put("updatedAt", o.updatedAt)
+                })
+            }
+        }
+        out["inventory_po_lines"] = JSONArray().also { a ->
+            dao.getAllPoLinesSync().forEach { l ->
+                a.put(JSONObject().apply {
+                    put("id", l.id); put("poId", l.poId); put("itemId", l.itemId)
+                    put("qtyOrdered", l.qtyOrdered); put("unitPrice", l.unitPrice); put("updatedAt", l.updatedAt)
                 })
             }
         }
@@ -166,6 +182,39 @@ object InventoryBackup {
                             mfgDate = o.longOrNull("mfgDate"), expiryDate = o.longOrNull("expiryDate"),
                             status = o.optString("status", "RELEASED"), receivedAt = o.optLong("receivedAt", System.currentTimeMillis()),
                             notes = o.optString("notes", ""), updatedAt = if (ts > 0L) ts else System.currentTimeMillis(), isPending = true)
+                    )
+                }
+            }
+        }
+        root.optJSONArray("inventory_purchase_orders")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val id = o.optString("id", "")
+                if (id.isBlank()) continue
+                val ts = o.optLong("updatedAt", 0L)
+                val local = dao.poOrNull(id)
+                if (local == null || ts > local.updatedAt) {
+                    dao.upsertPo(
+                        InventoryPurchaseOrder(id = id, number = o.optString("number", ""), supplierId = o.optString("supplierId", ""),
+                            status = o.optString("status", "DRAFT"), notes = o.optString("notes", ""),
+                            createdBy = o.optString("createdBy", ""), createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                            updatedAt = if (ts > 0L) ts else System.currentTimeMillis(), isPending = true)
+                    )
+                }
+            }
+        }
+        root.optJSONArray("inventory_po_lines")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val id = o.optString("id", "")
+                if (id.isBlank()) continue
+                val ts = o.optLong("updatedAt", 0L)
+                val local = dao.poLineOrNull(id)
+                if (local == null || ts > local.updatedAt) {
+                    dao.upsertPoLine(
+                        InventoryPoLine(id = id, poId = o.optString("poId", ""), itemId = o.optString("itemId", ""),
+                            qtyOrdered = o.optLong("qtyOrdered", 0L), unitPrice = o.optDouble("unitPrice", 0.0),
+                            updatedAt = if (ts > 0L) ts else System.currentTimeMillis(), isPending = true)
                     )
                 }
             }
