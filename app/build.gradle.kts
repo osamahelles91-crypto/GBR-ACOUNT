@@ -14,8 +14,8 @@ android {
     applicationId = "com.aistudio.gbrproduction.vsiyny4.app.ejttgq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 56
-    versionName = "1.2.33"
+    versionCode = 57
+    versionName = "1.2.34"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
