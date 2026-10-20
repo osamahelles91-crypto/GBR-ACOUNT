@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- خلفية النافذة (أندرويد 11 فأقل، ولحظة الانتقال في 12+): خلفية بيضاء + نفس صورة الشعار الجاهزة في المنتصف بدون تحجيم (gravity=center) كي لا يُقصّ -->
+<!-- خلفية النافذة (أندرويد 11 فأقل، ولحظة الانتقال في 12+): خلفية بلون Plus الهادئ (E4F4F0) + نفس صورة الشعار الجاهزة في المنتصف بدون تحجيم (gravity=center) كي لا يُقصّ -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#FFFFFF" />
+            <solid android:color="#E4F4F0" />
         </shape>
     </item>
     <item>

@@ -1,12 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- الشعار المعتمد داخل المنطقة الآمنة للأيقونة المتكيفة (108dp، المنطقة الآمنة ≈ 66dp). نسبة الصورة 900:464 محفوظة. bitmap بـ gravity=fill ليُقاس ولا يُقصّ -->
+<!-- الشعار المعتمد داخل المنطقة الآمنة للأيقونة المتكيفة (108dp، المنطقة الآمنة ≈ 66dp). نسبة الصورة 900:464 محفوظة. bitmap بـ gravity=fill ليُقاس ولا يُقصّ.
+     التطبيق المتحوّر (Plus): الشعار مرفوع قليلاً وشارة «+» أسفل اليمين، وكلاهما داخل المنطقة الآمنة -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item
         android:width="58dp"
         android:height="30dp"
-        android:gravity="center">
+        android:gravity="center"
+        android:bottom="16dp">
         <bitmap
             android:gravity="fill"
             android:src="@drawable/img_gbr_logo_about" />
     </item>
+    <item
+        android:width="24dp"
+        android:height="24dp"
+        android:gravity="bottom|end"
+        android:end="24dp"
+        android:bottom="22dp"
+        android:drawable="@drawable/ic_plus_badge" />
 </layer-list>
