@@ -3572,7 +3572,14 @@ object SyncManager {
                     }
                 }
                 activeRegistrations.add(hostingReg)
-                
+
+                // 18. المخزون (دفتر الحركات + السجلات الرئيسة) — منطق مستقل في InventorySync.kt
+                try {
+                    activeRegistrations.addAll(InventorySync.attachListeners(db, context))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed attaching inventory listeners", e)
+                }
+
                 Log.i(TAG, "Successfully attached 17 active Realtime Sync listeners to Firestore!")
                 
                 // Drain local pending queue automatically whenever realtime listeners start/restart (connection restored)
