@@ -1155,7 +1155,7 @@ fun SplashScreen(viewModel: GbrViewModel? = null) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
+            .background(PlusTealSoft)
             .windowInsetsPadding(WindowInsets.safeDrawing),
         contentAlignment = Alignment.Center
     ) {
@@ -1170,12 +1170,29 @@ fun SplashScreen(viewModel: GbrViewModel? = null) {
             Spacer(modifier = Modifier.height(28.dp))
             
             Text(
-                text = t("نظام متابعة وجودة الإنتاج", "Production & Quality Tracking System"),
+                text = t("المنظومة الشاملة", "The Comprehensive System"),
                 fontSize = 22.sp,
-                color = GBRBlueMain,
+                color = PlusTealDark,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // شارة «PLUS» تميّز هذا التطبيق عن التطبيق الأصلي
+            Box(
+                modifier = Modifier
+                    .background(PlusTeal, RoundedCornerShape(50))
+                    .padding(horizontal = 18.dp, vertical = 5.dp)
+            ) {
+                Text(
+                    text = "GBR PRO +",
+                    fontSize = 13.sp,
+                    color = Color.White,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 2.sp
+                )
+            }
         }
     }
 }
@@ -1252,7 +1269,7 @@ fun LoginScreen(viewModel: GbrViewModel) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
+            .background(Brush.verticalGradient(listOf(PlusTealSoft, Color.White)))
             .windowInsetsPadding(WindowInsets.safeDrawing),
         contentAlignment = Alignment.Center
     ) {
@@ -1273,10 +1290,21 @@ fun LoginScreen(viewModel: GbrViewModel) {
 
             // App Name directly below the logo
             Text(
-                text = "GBR PRO",
+                text = "GBR PRO +",
                 fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = GBRBlueMain,
+                fontWeight = FontWeight.Black,
+                color = PlusTeal,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // اسم النظام الجديد + شارة تميّز التطبيق المتحوّر
+            Text(
+                text = "المنظومة الشاملة",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = PlusTealDark,
                 textAlign = TextAlign.Center
             )
 
@@ -1306,7 +1334,7 @@ fun LoginScreen(viewModel: GbrViewModel) {
                         text = "اختر المستخدم لتسجيل الدخول",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Black,
-                        color = GBRBlueMain,
+                        color = PlusTeal,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
@@ -1323,7 +1351,7 @@ fun LoginScreen(viewModel: GbrViewModel) {
                         OutlinedCard(
                             onClick = { dropdownExpanded = true },
                             shape = RoundedCornerShape(16.dp),
-                            border = BorderStroke(1.5.dp, GBRBlueMain),
+                            border = BorderStroke(1.5.dp, PlusTeal),
                             colors = CardDefaults.cardColors(containerColor = Color.White),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1343,7 +1371,7 @@ fun LoginScreen(viewModel: GbrViewModel) {
                                     Icon(
                                         imageVector = Icons.Default.Person,
                                         contentDescription = null,
-                                        tint = GBRBlueMain
+                                        tint = PlusTeal
                                     )
                                     Column {
                                         Text(
@@ -1362,7 +1390,7 @@ fun LoginScreen(viewModel: GbrViewModel) {
                                 Icon(
                                     imageVector = Icons.Default.ArrowDropDown,
                                     contentDescription = null,
-                                    tint = GBRBlueMain
+                                    tint = PlusTeal
                                 )
                             }
                         }
@@ -1380,7 +1408,7 @@ fun LoginScreen(viewModel: GbrViewModel) {
                                         Text(
                                             text = role,
                                             fontWeight = if (selectedRole == role) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (selectedRole == role) GBRBlueMain else GBRDarkIndigo
+                                            color = if (selectedRole == role) PlusTeal else GBRDarkIndigo
                                         )
                                     },
                                     onClick = {
@@ -1424,22 +1452,22 @@ fun LoginScreen(viewModel: GbrViewModel) {
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color(0xFF0F172A),
                             unfocusedTextColor = Color(0xFF0F172A),
-                            focusedLabelColor = GBRBlueMain,
+                            focusedLabelColor = PlusTeal,
                             unfocusedLabelColor = Color(0xFF64748B),
-                            focusedBorderColor = GBRBlueMain,
+                            focusedBorderColor = PlusTeal,
                             unfocusedBorderColor = Color(0xFFCBD5E1)
                         ),
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(64.dp),
-                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Lock", tint = GBRBlueMain) },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Lock", tint = PlusTeal) },
                         trailingIcon = {
                             IconButton(onClick = { passwordVisibility = !passwordVisibility }) {
                                 Icon(
                                     imageVector = if (passwordVisibility) Icons.Default.Check else Icons.Default.Lock,
                                     contentDescription = "عرض كلمة المرور",
-                                    tint = GBRBlueMain
+                                    tint = PlusTeal
                                 )
                             }
                         }
@@ -1483,7 +1511,7 @@ fun LoginScreen(viewModel: GbrViewModel) {
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.horizontalGradient(
-                                    colors = listOf(GBRBlueMain, GBRPurpleAccent)
+                                    colors = listOf(PlusTeal, PlusTealDark)
                                 )
                             ),
                         colors = ButtonDefaults.buttonColors(
@@ -1513,7 +1541,7 @@ fun LoginScreen(viewModel: GbrViewModel) {
                 text = "الإصدار ${com.example.BuildConfig.VERSION_NAME}",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = GBRBlueMain,
+                color = PlusTeal,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
         }
@@ -28360,7 +28388,7 @@ fun A4WysiwygPreview(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("الصفحة ١ من ١", fontSize = 6.5.sp, color = Color(0xFF94A3B8))
-                    Text("نسخة مطبوعة من نظام متابعة جودة الإنتاج  |  GBR Paints", fontSize = 6.5.sp, color = Color(0xFF94A3B8))
+                    Text("نسخة مطبوعة من المنظومة الشاملة  |  GBR Paints", fontSize = 6.5.sp, color = Color(0xFF94A3B8))
                     Text("مستند إنتاجي معتمد الفنية", fontSize = 6.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D4ED8))
                 }
             }

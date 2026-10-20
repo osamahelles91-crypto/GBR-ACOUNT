@@ -23,3 +23,7 @@ val SuccessGreen = Color(0xFF10B981)      // Green-500
 val WarningOrange = Color(0xFFF59E0B)     // Amber-500
 val ErrorRed = Color(0xFFEF4444)          // Red-500
 
+// هوية التطبيق المتحوّر (GBR Pro Plus): تيل هادئ يميّزه عن التطبيق الأصلي الأزرق
+val PlusTeal = Color(0xFF0B7A6E)
+val PlusTealDark = Color(0xFF064E46)
+val PlusTealSoft = Color(0xFFE4F4F0)
