@@ -51,7 +51,7 @@ jobs:
 
     - name: Build Debug APK
       env:
-        APP_ID_SUFFIX: ".test"
+        APP_ID_SUFFIX: ".acount"
       run: ./gradlew assembleDebug --no-daemon --max-workers=2 -Dorg.gradle.jvmargs="-Xmx3072m -XX:+UseG1GC"
 
     - name: Diagnose APK (package, providers, permissions, signer)
