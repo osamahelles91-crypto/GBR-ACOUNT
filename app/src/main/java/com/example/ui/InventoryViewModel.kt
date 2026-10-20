@@ -53,6 +53,21 @@ data class AbcRow(
     val abcClass: String
 )
 
+/** نقص مادة لأمر إنتاج مفتوح (الاحتياج بوحدة الأساس مقابل المتاح). */
+data class ShortageRow(
+    val orderNumber: String,
+    val product: String,
+    val status: String,
+    val itemName: String,
+    val required: Double,
+    val available: Double,
+    val uom: String,
+    val noBalance: Boolean
+)
+
+/** بند تدقيق ربط الإنتاج: CANCELLED/ORPHAN يُعكس صرفه يدوياً، DIFF للعلم والتسوية. */
+data class IssueReview(val kind: String, val orderId: String, val title: String, val detail: String)
+
 class InventoryViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
     private val dao = db.inventoryDao()
@@ -151,6 +166,66 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
                 .groupBy { it.refDoc }.mapValues { e -> e.value.sumOf { it.qtyBase } }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
+    private val openOrderStatuses = setOf("مسودة", "جاهز للتنفيذ", "قيد التنفيذ")
+
+    private fun kgToBase(kg: Double, s: StockRow): Double? {
+        if (s.uom != "L") return kg
+        val dn = s.profile?.densityKgPerL ?: 0.0
+        return if (dn > 0.0) kg / dn else null
+    }
+
+    /** فحص التوفر: الأوامر المفتوحة التي يزيد احتياجها عن المتاح، ومواد بلا رصيد مسجَّل. */
+    val shortages: StateFlow<List<ShortageRow>> =
+        combine(gdao.getAllProductionOrders(), gdao.getAllProductionOrderItems(), stockRows) { orders, items, stock ->
+            val byOrder = items.groupBy { it.productionOrderId }
+            val stockBy = stock.associateBy { it.item.id }
+            val out = ArrayList<ShortageRow>()
+            for (o in orders.filter { it.status in openOrderStatuses }) {
+                for (line in byOrder[o.id].orEmpty()) {
+                    val s = stockBy[line.rawMaterialId] ?: continue
+                    val req = kgToBase(line.calculatedQuantity, s) ?: continue
+                    if (!s.hasMoves) {
+                        out.add(ShortageRow(o.orderNumber, o.formulationName, o.status, line.rawMaterialName, req, 0.0, s.uom, true))
+                    } else if (req > s.qtyDisplay + 0.0005) {
+                        out.add(ShortageRow(o.orderNumber, o.formulationName, o.status, line.rawMaterialName, req, s.qtyDisplay, s.uom, false))
+                    }
+                }
+            }
+            out.sortedWith(compareBy<ShortageRow>({ it.orderNumber }, { it.itemName }))
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** تدقيق: صرف قائم لأمر ملغى/محذوف، وفروق بين المطلوب والمصروف لأوامر مكتملة. */
+    val reviews: StateFlow<List<IssueReview>> =
+        combine(gdao.getAllProductionOrders(), gdao.getAllProductionOrderItems(), allMoves) { orders, items, moves ->
+            val reversed = moves.mapNotNull { it.reversesMoveId }.toSet()
+            val live = moves.filter { it.type == "ISSUE" && it.refDoc.startsWith("ORD:") && it.moveId !in reversed }
+            val byOrder = live.groupBy { it.refDoc.removePrefix("ORD:") }
+            val orderBy = orders.associateBy { it.id }
+            val itemsByOrder = items.groupBy { it.productionOrderId }
+            val out = ArrayList<IssueReview>()
+            for ((oid, ms) in byOrder) {
+                val o = orderBy[oid]
+                val totalKg = InventoryMath.toDisplay(ms.sumOf { it.qtyBase })
+                if (o == null) {
+                    // قائمة الأوامر الفارغة قد تعني قاعدة أُعيد إنشاؤها قبل المزامنة: لا نُنذر حينها
+                    if (orders.isNotEmpty()) out.add(IssueReview("ORPHAN", oid, "أمر محذوف", "صرف قائم بإجمالي " + totalKg + " (وحدة الأساس) لأمر لم يعد موجوداً"))
+                } else if (o.status == "ملغي") {
+                    out.add(IssueReview("CANCELLED", oid, o.orderNumber + " — " + o.formulationName, "أمر ملغى له صرف قائم بإجمالي " + totalKg))
+                } else if (o.status == "مكتمل") {
+                    for (line in itemsByOrder[oid].orEmpty()) {
+                        val issued = ms.filter { it.itemId == line.rawMaterialId }
+                        if (issued.isEmpty() || issued.first().uom == "L") continue
+                        val issuedKg = InventoryMath.toDisplay(issued.sumOf { it.qtyBase })
+                        if (kotlin.math.abs(issuedKg - line.calculatedQuantity) > 0.01) {
+                            out.add(IssueReview("DIFF", oid, o.orderNumber + " — " + line.rawMaterialName,
+                                "المطلوب " + line.calculatedQuantity + " كجم، المصروف " + issuedKg + " كجم (عدّل بتسوية أو اعكس الحركة من بطاقة الصنف)"))
+                        }
+                    }
+                }
+            }
+            out
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val message = MutableStateFlow<String?>(null)
 
     init {
@@ -243,6 +318,10 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun rejectLot(lotId: String, reason: String, user: String) {
         viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.rejectLot(getApplication(), lotId, reason, user)) }
+    }
+
+    fun reverseOrderIssues(orderId: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.reverseOrderIssues(getApplication(), orderId, user)) }
     }
 
     fun syncNow() {
