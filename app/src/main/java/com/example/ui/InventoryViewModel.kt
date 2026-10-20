@@ -68,6 +68,20 @@ data class ShortageRow(
 /** بند تدقيق ربط الإنتاج: CANCELLED/ORPHAN يُعكس صرفه يدوياً، DIFF للعلم والتسوية. */
 data class IssueReview(val kind: String, val orderId: String, val title: String, val detail: String)
 
+/** دفعة منتج تام بتفاصيلها المشتقة من الدفعة والأرصدة (عدد العبوات). */
+data class FgLotRow(
+    val lot: StockLot,
+    val product: String,
+    val pack: String,
+    val netKg: Double,
+    val orderNumber: String,
+    val theoreticalKg: Double,
+    val producedCount: Int,
+    val qcCount: Double,        // في حجر الجودة
+    val availCount: Double,     // في مخزن المنتج التام (مُفرَج)
+    val orderYieldPct: Double   // إنتاجية الأمر % = المعبأ ÷ النظري
+)
+
 class InventoryViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
     private val dao = db.inventoryDao()
@@ -226,6 +240,40 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
             out
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** دفعات المنتج التام (itemId يبدأ بـFG|) مع بيانات الأمر من السطر الأول للملاحظات. */
+    val fgLots: StateFlow<List<FgLotRow>> =
+        combine(lots, lotBalances) { ls, bal ->
+            val fg = ls.filter { it.itemId.startsWith("FG|") }
+            val balMap = bal.associate { (it.lotId + "|" + it.locId) to it.qty }
+            val parsed = fg.map { l ->
+                val parts = l.notes.lineSequence().firstOrNull().orEmpty().split("#")
+                // FG#المنتج#العبوة#صافي#رقم الأمر#النظري#العدد
+                val net = parts.getOrNull(3)?.toDoubleOrNull() ?: 0.0
+                val cnt = parts.getOrNull(6)?.toIntOrNull() ?: 0
+                val order = parts.getOrNull(4) ?: ""
+                val theo = parts.getOrNull(5)?.toDoubleOrNull() ?: 0.0
+                Triple(l, parts, Triple(net, cnt, Pair(order, theo)))
+            }
+            val packedByOrder = parsed.groupBy { it.third.third.first }
+                .mapValues { e -> e.value.sumOf { it.third.first * it.third.second } }
+            parsed.map { (l, parts, nc) ->
+                val order = nc.third.first
+                val theo = nc.third.second
+                FgLotRow(
+                    lot = l,
+                    product = parts.getOrNull(1) ?: l.itemId,
+                    pack = parts.getOrNull(2) ?: "",
+                    netKg = nc.first,
+                    orderNumber = order,
+                    theoreticalKg = theo,
+                    producedCount = nc.second,
+                    qcCount = InventoryMath.toDisplay(balMap[l.id + "|" + InventoryIds.LOC_FG_QC] ?: 0L),
+                    availCount = InventoryMath.toDisplay(balMap[l.id + "|" + InventoryIds.LOC_FG] ?: 0L),
+                    orderYieldPct = if (theo > 0.0) (packedByOrder[order] ?: 0.0) / theo * 100.0 else 0.0
+                )
+            }.sortedWith(compareBy<FgLotRow> { it.lot.expiryDate ?: Long.MAX_VALUE }.thenBy { it.lot.receivedAt })
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val message = MutableStateFlow<String?>(null)
 
     init {
@@ -322,6 +370,22 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun reverseOrderIssues(orderId: String, user: String) {
         viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.reverseOrderIssues(getApplication(), orderId, user)) }
+    }
+
+    fun releaseFinished(lotId: String, evidence: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.releaseFinished(getApplication(), lotId, evidence, user)) }
+    }
+
+    fun rejectFinished(lotId: String, reason: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.rejectFinished(getApplication(), lotId, reason, user)) }
+    }
+
+    fun markRework(lotId: String, reason: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.markRework(getApplication(), lotId, reason, user)) }
+    }
+
+    fun adjustFinished(lotId: String, count: Int, reason: String, note: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.adjustFinished(getApplication(), lotId, count, reason, note, user)) }
     }
 
     fun syncNow() {

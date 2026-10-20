@@ -355,7 +355,8 @@ private fun ReceiveDialog(
 // =====================================================================================
 @Composable
 internal fun LotsTab(vm: InventoryViewModel, rows: List<StockRow>, canRelease: Boolean, userName: String) {
-    val lots by vm.lots.collectAsState()
+    val allLots by vm.lots.collectAsState()
+    val lots = allLots.filter { !it.itemId.startsWith("FG|") }   // دفعات المنتج التام لها تبويبها
     val bal by vm.lotBalances.collectAsState()
     val context = LocalContext.current
     var filter by remember { mutableStateOf("ACTIVE") }
