@@ -104,7 +104,49 @@ object InventoryProduction {
                 }
             }
         }
-        if (created > 0) Log.i(TAG, "صُرف للإنتاج: $created حركة")
+        created += reconcileFinished(ctx, d, completed)
+        if (created > 0) Log.i(TAG, "صُرف/استُلم: $created حركة")
         created
+    }
+
+    /**
+     * استلام المنتج التام: لكل عبوة مسجَّلة فعلاً في أمر مكتمل تُنشأ دفعة (معرّف حتمي) في حجر الجودة بحالة QC_HOLD.
+     * تبدأ التتبع من أقدم رصيد افتتاحي في الدفتر؛ ما قبله تاريخي ولا يُستلم. يعتمد على actualPackagingJson (id, name, netWeight, actualCount).
+     */
+    private suspend fun reconcileFinished(ctx: Context, d: InventoryDao, completed: List<ProductionOrder>): Int {
+        val cutoff = d.firstOpeningTs() ?: return 0
+        var n = 0
+        for (o in completed) {
+            val ts = completionTs(o)
+            if (ts < cutoff) continue
+            val arr = try { org.json.JSONArray(o.actualPackagingJson) } catch (e: Exception) { continue }
+            var packedKg = 0.0
+            val packs = ArrayList<Triple<String, String, Pair<Int, Double>>>()
+            for (i in 0 until arr.length()) {
+                val p = arr.optJSONObject(i) ?: continue
+                val count = p.optDouble("actualCount", 0.0).toInt()
+                val net = p.optDouble("netWeight", 0.0)
+                if (count <= 0) continue
+                packs.add(Triple(p.optString("id", i.toString()), p.optString("name", "عبوة"), Pair(count, net)))
+                packedKg += count * net
+            }
+            for ((packId, name, cn) in packs) {
+                val (count, net) = cn
+                val moveId = InventoryManager.deterministicId("fgr|${o.id}|$packId")
+                if (d.getMove(moveId) != null) continue
+                val sku = "FG|" + o.formulationId + "|" + packId
+                val lotId = InventoryManager.deterministicId("fglot|${o.id}|$packId")
+                val meta = "FG#" + o.formulationName.replace('#', ' ') + "#" + name.replace('#', ' ') + "#" + net + "#" +
+                    o.orderNumber + "#" + o.requiredWeightKg + "#" + count
+                d.upsertLot(
+                    StockLot(
+                        id = lotId, itemId = sku, lotNo = o.batchNumber + "-" + name.replace(' ', '_'),
+                        expiryDate = ts + 730L * 86_400_000L, status = "QC_HOLD", receivedAt = ts, notes = meta
+                    )
+                )
+                if (InventoryManager.receiveFinished(ctx, sku, lotId, count, o.id, packId, SYSTEM_USER)) n++
+            }
+        }
+        return n
     }
 }

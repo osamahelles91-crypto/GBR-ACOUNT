@@ -207,6 +207,10 @@ interface InventoryDao {
     @Query("SELECT * FROM stock_lots WHERE id = :id")
     suspend fun getLot(id: String): StockLot?
 
+    /** أقدم رصيد افتتاحي في الدفتر: بداية تتبع المنتج التام (مشتركة بين الأجهزة لأنها من الدفتر نفسه). */
+    @Query("SELECT MIN(clientCreatedAt) FROM stock_moves WHERE type = 'OPENING'")
+    suspend fun firstOpeningTs(): Long?
+
     @Query("SELECT * FROM stock_lots WHERE itemId = :itemId")
     suspend fun getLotsForItem(itemId: String): List<StockLot>
 

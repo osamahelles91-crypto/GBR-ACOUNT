@@ -7,6 +7,8 @@ import java.util.UUID
 object InventoryIds {
     const val LOC_MAIN = "L_MAIN"
     const val LOC_QUAR = "L_QUAR"
+    const val LOC_FG_QC = "L_FG_QC"   // حجر جودة المنتج التام (QC_HOLD)
+    const val LOC_FG = "L_FG"         // مخزن المنتج التام القابل للبيع
     const val V_OPENING = "V_OPENING"
     const val V_ADJUST = "V_ADJUST"
     const val V_SUPPLIER = "V_SUPPLIER"
@@ -24,6 +26,10 @@ object InventoryTypes {
     const val RELEASE = "RELEASE"
     const val REJECT = "REJECT"
     const val ISSUE = "ISSUE"
+    const val FG_RECEIPT = "FG_RECEIPT"
+    const val FG_RELEASE = "FG_RELEASE"
+    const val FG_REJECT = "FG_REJECT"
+    const val FG_ADJUST = "FG_ADJUST"
 }
 
 /** أكواد أسباب التسوية (إلزامية). */
@@ -172,6 +178,8 @@ object InventoryManager {
         // معرّفان ثابتان فلا يتكرران بين الأجهزة (insertIfAbsent)
         d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_MAIN, name = "المخزن الرئيسي", zone = "GENERAL"))
         d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_QUAR, name = "منطقة الحجر (بانتظار الفحص)", zone = "QUARANTINE"))
+        d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_FG_QC, name = "حجر جودة المنتج التام", zone = "QC_HOLD"))
+        d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_FG, name = "مخزن المنتج التام", zone = "FINISHED"))
     }
 
     private suspend fun write(ctx: Context, move: StockMove): Boolean {
@@ -250,7 +258,8 @@ object InventoryManager {
         val orig = d.getMove(moveId) ?: return OpResult(false, "الحركة غير موجودة")
         if (orig.type == InventoryTypes.REVERSAL) return OpResult(false, "لا يمكن عكس حركة عكسية")
         if (d.countReversalsOf(moveId) > 0) return OpResult(false, "هذه الحركة مُعكوسة مسبقاً")
-        if (orig.type == InventoryTypes.RELEASE || orig.type == InventoryTypes.REJECT) {
+        if (orig.type == InventoryTypes.RELEASE || orig.type == InventoryTypes.REJECT ||
+            orig.type == InventoryTypes.FG_RELEASE || orig.type == InventoryTypes.FG_REJECT) {
             return OpResult(false, "لا تُعكس حركة الإفراج/الرفض: تغيّر حالة الدفعة. استخدم تسوية أو استلاماً جديداً")
         }
         // العكس يُخرج الكمية من موقع وصولها الأصلي؛ يجب أن يتسع رصيد ذلك الموقع (والدفعة إن وُجدت)
@@ -436,6 +445,80 @@ object InventoryManager {
             if (reverse(ctx, m.moveId, "إلغاء/حذف أمر الإنتاج", userId).ok) done++
         }
         return OpResult(done > 0, "عُكست $done من ${targets.size} حركة صرف")
+    }
+
+    // ======================= المرحلة 4: المنتج التام =======================
+    // SKU = "FG|formulationId|packId". الكمية = عدد العبوات × 1000 (نفس التخزين الصحيح الموحَّد؛ العرض ÷1000) بوحدة "EA".
+
+    /** استلام إنتاجي إلى حجر الجودة (يُستدعى من المراقب بمعرّف حتمي). */
+    suspend fun receiveFinished(ctx: Context, sku: String, lotId: String, count: Int, orderId: String, packId: String, userId: String): Boolean =
+        write(
+            ctx,
+            newMove(ctx, sku, lotId, InventoryIds.V_PRODUCTION, InventoryIds.LOC_FG_QC, InventoryMath.toStorage(count.toDouble()), "EA",
+                InventoryTypes.FG_RECEIPT, "PRODUCTION", "ORD:" + orderId, null, userId, id = deterministicId("fgr|$orderId|$packId"))
+        )
+
+    private fun appendNote(lot: StockLot, line: String): String = if (lot.notes.isBlank()) line else lot.notes + "\n" + line
+
+    /** إفراج دفعة منتج تام من حجر الجودة إلى القابل للبيع. مرجع الفحص إلزامي. لا إفراج لدفعة منتهية. */
+    suspend fun releaseFinished(ctx: Context, lotId: String, evidence: String, userId: String): OpResult {
+        if (evidence.isBlank()) return OpResult(false, "مرجع/نتيجة الفحص إلزامي للإفراج")
+        val d = dao(ctx)
+        val lot = d.getLot(lotId) ?: return OpResult(false, "الدفعة غير موجودة")
+        if (lot.status != "QC_HOLD" && lot.status != "REWORK") return OpResult(false, "الدفعة ليست في حجر الجودة")
+        if (lot.expiryDate != null && lot.expiryDate < System.currentTimeMillis()) return OpResult(false, "الدفعة منتهية الصلاحية")
+        val qty = d.getLotOnHandAt(lotId, InventoryIds.LOC_FG_QC)
+        if (qty <= 0L) return OpResult(false, "لا رصيد لهذه الدفعة في حجر الجودة")
+        val ok = write(
+            ctx,
+            newMove(ctx, lot.itemId, lotId, InventoryIds.LOC_FG_QC, InventoryIds.LOC_FG, qty, "EA",
+                InventoryTypes.FG_RELEASE, "QC_RELEASE", evidence.trim(), null, userId, id = deterministicId("fgrel|$lotId"))
+        )
+        d.upsertLot(lot.copy(status = "RELEASED", notes = appendNote(lot, "إفراج: " + evidence.trim() + " (" + userId + ")"), updatedAt = System.currentTimeMillis(), isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return if (ok) OpResult(true, "أُفرجت الدفعة ${lot.lotNo} للبيع") else OpResult(true, "الدفعة مُفرَج عنها مسبقاً")
+    }
+
+    suspend fun rejectFinished(ctx: Context, lotId: String, reason: String, userId: String): OpResult {
+        if (reason.isBlank()) return OpResult(false, "سبب الرفض إلزامي")
+        val d = dao(ctx)
+        val lot = d.getLot(lotId) ?: return OpResult(false, "الدفعة غير موجودة")
+        if (lot.status != "QC_HOLD" && lot.status != "REWORK") return OpResult(false, "الدفعة ليست في حجر الجودة")
+        val qty = d.getLotOnHandAt(lotId, InventoryIds.LOC_FG_QC)
+        if (qty <= 0L) return OpResult(false, "لا رصيد لهذه الدفعة في حجر الجودة")
+        val ok = write(
+            ctx,
+            newMove(ctx, lot.itemId, lotId, InventoryIds.LOC_FG_QC, InventoryIds.V_SCRAP, qty, "EA",
+                InventoryTypes.FG_REJECT, "QC_REJECT", reason.trim(), null, userId, id = deterministicId("fgrej|$lotId"))
+        )
+        d.upsertLot(lot.copy(status = "REJECTED", notes = appendNote(lot, "رفض: " + reason.trim() + " (" + userId + ")"), updatedAt = System.currentTimeMillis(), isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return if (ok) OpResult(true, "رُفضت الدفعة ${lot.lotNo}") else OpResult(true, "الدفعة مرفوضة مسبقاً")
+    }
+
+    /** دفعة راسبة تحتاج إعادة تشغيل/تصحيح: تبقى في الحجر بحالة REWORK ولا تُباع. */
+    suspend fun markRework(ctx: Context, lotId: String, reason: String, userId: String): OpResult {
+        if (reason.isBlank()) return OpResult(false, "السبب إلزامي")
+        val d = dao(ctx)
+        val lot = d.getLot(lotId) ?: return OpResult(false, "الدفعة غير موجودة")
+        if (lot.status != "QC_HOLD") return OpResult(false, "الدفعة ليست قيد الفحص")
+        d.upsertLot(lot.copy(status = "REWORK", notes = appendNote(lot, "إعادة تشغيل: " + reason.trim() + " (" + userId + ")"), updatedAt = System.currentTimeMillis(), isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "وُسمت الدفعة بإعادة تشغيل")
+    }
+
+    /** إخراج عبوات من المنتج التام المُفرَج (عينة محتفظ بها، تلف…) بسبب إلزامي. البيع في المرحلة 5. */
+    suspend fun adjustFinished(ctx: Context, lotId: String, count: Int, reasonCode: String, note: String, userId: String): OpResult {
+        if (count <= 0) return OpResult(false, "أدخل عدد عبوات صحيحاً")
+        if (reasonCode.isBlank()) return OpResult(false, "السبب إلزامي")
+        val d = dao(ctx)
+        val lot = d.getLot(lotId) ?: return OpResult(false, "الدفعة غير موجودة")
+        if (lot.status != "RELEASED") return OpResult(false, "الدفعة غير مُفرَج عنها")
+        val qty = InventoryMath.toStorage(count.toDouble())
+        val have = d.getLotOnHandAt(lotId, InventoryIds.LOC_FG)
+        if (qty > have) return OpResult(false, "العدد أكبر من المتاح (" + InventoryMath.toDisplay(have) + ")")
+        write(ctx, newMove(ctx, lot.itemId, lotId, InventoryIds.LOC_FG, InventoryIds.V_ADJUST, qty, "EA", InventoryTypes.FG_ADJUST, reasonCode, note, null, userId))
+        return OpResult(true, "تم تسجيل الإخراج")
     }
 
     // ---------- حفظ السجلات الرئيسة ----------
