@@ -35,6 +35,8 @@ object InventorySync {
     const val COL_LOTS = "stock_lots"
     const val COL_POS = "inventory_purchase_orders"
     const val COL_PO_LINES = "inventory_po_lines"
+    const val COL_SOS = "inventory_sales_orders"
+    const val COL_SO_LINES = "inventory_so_lines"
 
     private fun cloudReady(context: Context): Boolean {
         if (!DeviceSecurityManager.isCloudConfigured(context)) return false
@@ -152,6 +154,25 @@ object InventorySync {
                     ).awaitTask()
                     dao.markPoLineSynced(l.id, l.updatedAt)
                 } catch (e: Exception) { Log.e(TAG, "po line upload failed ${l.id}", e) }
+            }
+            for (so in dao.getPendingSos()) {
+                try {
+                    db.collection(COL_SOS).document(so.id).set(
+                        hashMapOf<String, Any?>("id" to so.id, "number" to so.number, "customer" to so.customer,
+                            "status" to so.status, "notes" to so.notes, "createdBy" to so.createdBy,
+                            "createdAt" to so.createdAt, "updatedAt" to so.updatedAt), SetOptions.merge()
+                    ).awaitTask()
+                    dao.markSoSynced(so.id, so.updatedAt)
+                } catch (e: Exception) { Log.e(TAG, "so upload failed ${so.id}", e) }
+            }
+            for (l in dao.getPendingSoLines()) {
+                try {
+                    db.collection(COL_SO_LINES).document(l.id).set(
+                        hashMapOf<String, Any?>("id" to l.id, "soId" to l.soId, "sku" to l.sku,
+                            "qtyOrdered" to l.qtyOrdered, "updatedAt" to l.updatedAt), SetOptions.merge()
+                    ).awaitTask()
+                    dao.markSoLineSynced(l.id, l.updatedAt)
+                } catch (e: Exception) { Log.e(TAG, "so line upload failed ${l.id}", e) }
             }
         }
     }
@@ -423,6 +444,61 @@ object InventorySync {
                             )
                         }
                     } catch (e: Exception) { Log.e(TAG, "apply cloud po line ${d.id} failed", e) }
+                }
+            }
+        }
+
+        regs += db.collection(COL_SOS).addSnapshotListener { snaps, err ->
+            if (err != null || snaps == null) return@addSnapshotListener
+            scope.launch {
+                for (dc in snaps.documentChanges) {
+                    if (dc.type == DocumentChange.Type.REMOVED) continue
+                    val d = dc.document
+                    try {
+                        val cloudTs = lng(d, "updatedAt") ?: continue
+                        val local = dao.soOrNull(d.id)
+                        if (local == null || cloudTs > local.updatedAt) {
+                            dao.upsertSo(
+                                InventorySalesOrder(
+                                    id = d.id,
+                                    number = d.getString("number") ?: "",
+                                    customer = d.getString("customer") ?: "",
+                                    status = d.getString("status") ?: "DRAFT",
+                                    notes = d.getString("notes") ?: "",
+                                    createdBy = d.getString("createdBy") ?: "",
+                                    createdAt = lng(d, "createdAt") ?: cloudTs,
+                                    updatedAt = cloudTs,
+                                    isPending = false
+                                )
+                            )
+                        }
+                    } catch (e: Exception) { Log.e(TAG, "apply cloud so ${d.id} failed", e) }
+                }
+            }
+        }
+
+        regs += db.collection(COL_SO_LINES).addSnapshotListener { snaps, err ->
+            if (err != null || snaps == null) return@addSnapshotListener
+            scope.launch {
+                for (dc in snaps.documentChanges) {
+                    if (dc.type == DocumentChange.Type.REMOVED) continue
+                    val d = dc.document
+                    try {
+                        val cloudTs = lng(d, "updatedAt") ?: continue
+                        val local = dao.soLineOrNull(d.id)
+                        if (local == null || cloudTs > local.updatedAt) {
+                            dao.upsertSoLine(
+                                InventorySoLine(
+                                    id = d.id,
+                                    soId = d.getString("soId") ?: continue,
+                                    sku = d.getString("sku") ?: continue,
+                                    qtyOrdered = lng(d, "qtyOrdered") ?: continue,
+                                    updatedAt = cloudTs,
+                                    isPending = false
+                                )
+                            )
+                        }
+                    } catch (e: Exception) { Log.e(TAG, "apply cloud so line ${d.id} failed", e) }
                 }
             }
         }

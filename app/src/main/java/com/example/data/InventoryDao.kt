@@ -264,4 +264,63 @@ interface InventoryDao {
 
     @Query("SELECT * FROM inventory_po_lines")
     suspend fun getAllPoLinesSync(): List<InventoryPoLine>
+
+    // ---------- المرحلة 5: البيع والتسليم والمرتجعات ----------
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSo(so: InventorySalesOrder)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSoLine(l: InventorySoLine)
+
+    @Query("SELECT * FROM inventory_sales_orders ORDER BY createdAt DESC")
+    fun observeSos(): Flow<List<InventorySalesOrder>>
+
+    @Query("SELECT * FROM inventory_so_lines")
+    fun observeSoLines(): Flow<List<InventorySoLine>>
+
+    @Query("SELECT * FROM inventory_sales_orders WHERE id = :id")
+    suspend fun soOrNull(id: String): InventorySalesOrder?
+
+    @Query("SELECT * FROM inventory_so_lines WHERE id = :id")
+    suspend fun soLineOrNull(id: String): InventorySoLine?
+
+    @Query("SELECT * FROM inventory_so_lines WHERE soId = :soId")
+    suspend fun getSoLines(soId: String): List<InventorySoLine>
+
+    @Query("SELECT * FROM inventory_sales_orders WHERE isPending = 1")
+    suspend fun getPendingSos(): List<InventorySalesOrder>
+
+    @Query("SELECT * FROM inventory_so_lines WHERE isPending = 1")
+    suspend fun getPendingSoLines(): List<InventorySoLine>
+
+    @Query("UPDATE inventory_sales_orders SET isPending = 0 WHERE id = :id AND updatedAt = :updatedAt")
+    suspend fun markSoSynced(id: String, updatedAt: Long)
+
+    @Query("UPDATE inventory_so_lines SET isPending = 0 WHERE id = :id AND updatedAt = :updatedAt")
+    suspend fun markSoLineSynced(id: String, updatedAt: Long)
+
+    @Query("SELECT * FROM inventory_sales_orders")
+    suspend fun getAllSosSync(): List<InventorySalesOrder>
+
+    @Query("SELECT * FROM inventory_so_lines")
+    suspend fun getAllSoLinesSync(): List<InventorySoLine>
+
+    /** المسلَّم فعلاً مقابل مرجع (سطر) بعد استبعاد الحركات المعكوسة. */
+    @Query(
+        "SELECT COALESCE(SUM(qtyBase), 0) FROM stock_moves m WHERE m.type = 'FG_DELIVERY' AND m.refDoc = :ref " +
+            "AND NOT EXISTS (SELECT 1 FROM stock_moves r WHERE r.reversesMoveId = m.moveId)"
+    )
+    suspend fun getDeliveredForRef(ref: String): Long
+
+    @Query(
+        "SELECT COALESCE(SUM(qtyBase), 0) FROM stock_moves m WHERE m.type = 'FG_DELIVERY' AND m.refDoc = :ref AND m.lotId = :lotId " +
+            "AND NOT EXISTS (SELECT 1 FROM stock_moves r WHERE r.reversesMoveId = m.moveId)"
+    )
+    suspend fun getDeliveredForRefLot(ref: String, lotId: String): Long
+
+    @Query(
+        "SELECT COALESCE(SUM(qtyBase), 0) FROM stock_moves m WHERE m.type = 'FG_RETURN' AND m.refDoc = :ref AND m.lotId = :lotId " +
+            "AND NOT EXISTS (SELECT 1 FROM stock_moves r WHERE r.reversesMoveId = m.moveId)"
+    )
+    suspend fun getReturnedForRefLot(ref: String, lotId: String): Long
 }

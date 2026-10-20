@@ -9,6 +9,7 @@ object InventoryIds {
     const val LOC_QUAR = "L_QUAR"
     const val LOC_FG_QC = "L_FG_QC"   // حجر جودة المنتج التام (QC_HOLD)
     const val LOC_FG = "L_FG"         // مخزن المنتج التام القابل للبيع
+    const val LOC_FG_RET = "L_FG_RET" // حجر المرتجعات (لا يعود للبيع مباشرة)
     const val V_OPENING = "V_OPENING"
     const val V_ADJUST = "V_ADJUST"
     const val V_SUPPLIER = "V_SUPPLIER"
@@ -30,6 +31,10 @@ object InventoryTypes {
     const val FG_RELEASE = "FG_RELEASE"
     const val FG_REJECT = "FG_REJECT"
     const val FG_ADJUST = "FG_ADJUST"
+    const val FG_DELIVERY = "FG_DELIVERY"
+    const val FG_RETURN = "FG_RETURN"
+    const val FG_RETURN_RESTOCK = "FG_RETURN_RESTOCK"
+    const val FG_RETURN_SCRAP = "FG_RETURN_SCRAP"
 }
 
 /** أكواد أسباب التسوية (إلزامية). */
@@ -180,6 +185,7 @@ object InventoryManager {
         d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_QUAR, name = "منطقة الحجر (بانتظار الفحص)", zone = "QUARANTINE"))
         d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_FG_QC, name = "حجر جودة المنتج التام", zone = "QC_HOLD"))
         d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_FG, name = "مخزن المنتج التام", zone = "FINISHED"))
+        d.insertLocationIfAbsent(StockLocation(id = InventoryIds.LOC_FG_RET, name = "حجر المرتجعات", zone = "RETURNS"))
     }
 
     private suspend fun write(ctx: Context, move: StockMove): Boolean {
@@ -519,6 +525,162 @@ object InventoryManager {
         if (qty > have) return OpResult(false, "العدد أكبر من المتاح (" + InventoryMath.toDisplay(have) + ")")
         write(ctx, newMove(ctx, lot.itemId, lotId, InventoryIds.LOC_FG, InventoryIds.V_ADJUST, qty, "EA", InventoryTypes.FG_ADJUST, reasonCode, note, null, userId))
         return OpResult(true, "تم تسجيل الإخراج")
+    }
+
+    // ======================= المرحلة 5: البيع والتسليم والمرتجعات =======================
+
+    private fun isSellable(l: StockLot, now: Long): Boolean =
+        l.status == "RELEASED" && (l.expiryDate == null || l.expiryDate > now)
+
+    /** المتاح للبيع (بوحدة التخزين) لـSKU: أرصدة الدفعات المُفرَجة غير المنتهية في مخزن المنتج التام. */
+    private suspend fun sellableStorage(d: InventoryDao, sku: String): Long {
+        val now = System.currentTimeMillis()
+        var sum = 0L
+        for (l in d.getLotsForItem(sku)) {
+            if (isSellable(l, now)) sum += maxOf(0L, d.getLotOnHandAt(l.id, InventoryIds.LOC_FG))
+        }
+        return sum
+    }
+
+    /** المحجوز لـSKU عبر طلبات بيع مؤكَّدة (المتبقي غير المسلَّم)، مع استثناء طلب معيّن. */
+    private suspend fun reservedStorage(d: InventoryDao, sku: String, exceptSoId: String?): Long {
+        var sum = 0L
+        for (so in d.getAllSosSync()) {
+            if (so.status != "CONFIRMED" || so.id == exceptSoId) continue
+            for (l in d.getSoLines(so.id)) {
+                if (l.sku != sku) continue
+                val delivered = d.getDeliveredForRef("SO:" + so.id + ":" + l.id)
+                sum += maxOf(0L, l.qtyOrdered - delivered)
+            }
+        }
+        return sum
+    }
+
+    /** طلب بيع (مسودة). lines: (sku, عدد العبوات). */
+    suspend fun createSo(ctx: Context, customer: String, notes: String, userId: String, lines: List<Pair<String, Int>>): OpResult {
+        if (customer.isBlank()) return OpResult(false, "اسم العميل مطلوب")
+        if (lines.isEmpty()) return OpResult(false, "أضف بنداً واحداً على الأقل")
+        for ((sku, c) in lines) {
+            if (c <= 0) return OpResult(false, "الأعداد يجب أن تكون أكبر من صفر")
+            if (!sku.startsWith("FG|")) return OpResult(false, "صنف غير صالح")
+        }
+        val d = dao(ctx)
+        val df = java.text.SimpleDateFormat("yyMMdd", java.util.Locale.US)
+        val so = InventorySalesOrder(
+            number = "SO-" + df.format(java.util.Date()) + "-" + randomDigits(3),
+            customer = customer.trim(), notes = notes.trim(), createdBy = userId
+        )
+        d.upsertSo(so)
+        for ((sku, c) in lines) {
+            d.upsertSoLine(InventorySoLine(soId = so.id, sku = sku, qtyOrdered = InventoryMath.toStorage(c.toDouble())))
+        }
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "تم إنشاء طلب البيع ${so.number}")
+    }
+
+    /** DRAFT→CONFIRMED (يحجز، ويُرفض إن لم يكفِ المتاح للوعد)، CONFIRMED→CLOSED، DRAFT/CONFIRMED→CANCELLED بلا تسليم. */
+    suspend fun setSoStatus(ctx: Context, soId: String, newStatus: String): OpResult {
+        val d = dao(ctx)
+        val so = d.soOrNull(soId) ?: return OpResult(false, "الطلب غير موجود")
+        val lines = d.getSoLines(soId)
+        when (newStatus) {
+            "CONFIRMED" -> {
+                if (so.status != "DRAFT") return OpResult(false, "الطلب ليس مسودة")
+                val bySku = lines.groupBy { it.sku }.mapValues { e -> e.value.sumOf { it.qtyOrdered } }
+                for ((sku, need) in bySku) {
+                    val atp = sellableStorage(d, sku) - reservedStorage(d, sku, soId)
+                    if (need > atp) {
+                        return OpResult(false, "المتاح للوعد (" + InventoryMath.toDisplay(maxOf(0L, atp)) + ") لا يكفي المطلوب (" + InventoryMath.toDisplay(need) + ") من دفعات مُفرَج عنها")
+                    }
+                }
+            }
+            "CLOSED" -> if (so.status != "CONFIRMED") return OpResult(false, "الطلب غير مؤكَّد")
+            "CANCELLED" -> {
+                if (so.status != "DRAFT" && so.status != "CONFIRMED") return OpResult(false, "لا يمكن إلغاء هذا الطلب")
+                for (l in lines) {
+                    if (d.getDeliveredForRef("SO:" + soId + ":" + l.id) > 0L) return OpResult(false, "يوجد تسليم على هذا الطلب؛ أغلقه بدل إلغائه")
+                }
+            }
+            else -> return OpResult(false, "حالة غير معروفة")
+        }
+        d.upsertSo(so.copy(status = newStatus, updatedAt = System.currentTimeMillis(), isPending = true))
+        InventorySync.uploadPendingAsync(ctx)
+        return OpResult(true, "تم تحديث حالة الطلب")
+    }
+
+    /**
+     * تسليم عدد عبوات من سطر طلب مؤكَّد: FEFO تلقائي عبر دفعات مُفرَجة غير منتهية (حركة لكل دفعة).
+     * overrideLotId لتجاوز FEFO بدفعة محددة (يتطلب سبباً مكتوباً؛ الصلاحية تُفحص في الواجهة).
+     */
+    suspend fun deliver(ctx: Context, soLineId: String, count: Int, overrideLotId: String?, overrideReason: String, userId: String): OpResult {
+        if (count <= 0) return OpResult(false, "أدخل عدداً صحيحاً")
+        if (overrideLotId != null && overrideReason.isBlank()) return OpResult(false, "سبب تجاوز FEFO إلزامي")
+        val d = dao(ctx)
+        val line = d.soLineOrNull(soLineId) ?: return OpResult(false, "سطر الطلب غير موجود")
+        val so = d.soOrNull(line.soId) ?: return OpResult(false, "الطلب غير موجود")
+        if (so.status != "CONFIRMED") return OpResult(false, "الطلب غير مؤكَّد أو مغلق")
+        val ref = "SO:" + so.id + ":" + line.id
+        val qty = InventoryMath.toStorage(count.toDouble())
+        val remaining = line.qtyOrdered - d.getDeliveredForRef(ref)
+        if (qty > remaining) return OpResult(false, "العدد أكبر من المتبقي في الطلب (" + InventoryMath.toDisplay(remaining) + ")")
+        val now = System.currentTimeMillis()
+        val ordered = d.getLotsForItem(line.sku).filter { isSellable(it, now) }
+            .sortedWith(compareBy<StockLot> { it.expiryDate ?: Long.MAX_VALUE }.thenBy { it.receivedAt })
+        val candidates = if (overrideLotId != null) ordered.filter { it.id == overrideLotId } else ordered
+        if (candidates.isEmpty()) return OpResult(false, "لا دفعة مُفرَجة صالحة للتسليم")
+        // تخصيص مسبق ثم كتابة: لا حركات جزئية عند النقص
+        val plan = ArrayList<Pair<StockLot, Long>>()
+        var left = qty
+        for (l in candidates) {
+            if (left <= 0L) break
+            val bal = d.getLotOnHandAt(l.id, InventoryIds.LOC_FG)
+            if (bal <= 0L) continue
+            val take = if (bal < left) bal else left
+            plan.add(Pair(l, take))
+            left -= take
+        }
+        if (left > 0L) return OpResult(false, "المتاح من الدفعات الصالحة لا يكفي (ينقص " + InventoryMath.toDisplay(left) + ")")
+        val reasonCode = if (overrideLotId != null) "FEFO_OVERRIDE" else "DELIVERY"
+        val note = if (overrideLotId != null) overrideReason.trim() else ""
+        for ((l, take) in plan) {
+            write(ctx, newMove(ctx, line.sku, l.id, InventoryIds.LOC_FG, InventoryIds.V_CUSTOMER, take, "EA",
+                InventoryTypes.FG_DELIVERY, reasonCode, ref, null, userId).copy(userId = if (note.isBlank()) userId else userId + " | " + note))
+        }
+        return OpResult(true, "تم تسجيل التسليم على " + plan.size + " دفعة")
+    }
+
+    /** مرتجع من عميل لدفعة سُلّمت في الطلب نفسه: يدخل حجر المرتجعات ولا يعود للبيع مباشرة. */
+    suspend fun returnFromCustomer(ctx: Context, soLineId: String, lotId: String, count: Int, reason: String, userId: String): OpResult {
+        if (count <= 0) return OpResult(false, "أدخل عدداً صحيحاً")
+        if (reason.isBlank()) return OpResult(false, "سبب المرتجع إلزامي")
+        val d = dao(ctx)
+        val line = d.soLineOrNull(soLineId) ?: return OpResult(false, "سطر الطلب غير موجود")
+        val lot = d.getLot(lotId) ?: return OpResult(false, "الدفعة غير موجودة")
+        if (lot.itemId != line.sku) return OpResult(false, "الدفعة لا تطابق صنف السطر")
+        val ref = "SO:" + line.soId + ":" + line.id
+        val qty = InventoryMath.toStorage(count.toDouble())
+        val net = d.getDeliveredForRefLot(ref, lotId) - d.getReturnedForRefLot(ref, lotId)
+        if (qty > net) return OpResult(false, "العدد أكبر من المسلَّم من هذه الدفعة في هذا الطلب (" + InventoryMath.toDisplay(maxOf(0L, net)) + ")")
+        write(ctx, newMove(ctx, line.sku, lotId, InventoryIds.V_CUSTOMER, InventoryIds.LOC_FG_RET, qty, "EA",
+            InventoryTypes.FG_RETURN, "CUSTOMER_RETURN", ref, null, userId).copy(userId = userId + " | " + reason.trim()))
+        return OpResult(true, "سُجّل المرتجع في حجر المرتجعات")
+    }
+
+    /** قرار المرتجع بعد الفحص: إعادة للمخزن (restock) أو هالك. السبب إلزامي. */
+    suspend fun dispositionReturn(ctx: Context, lotId: String, count: Int, restock: Boolean, reason: String, userId: String): OpResult {
+        if (count <= 0) return OpResult(false, "أدخل عدداً صحيحاً")
+        if (reason.isBlank()) return OpResult(false, "السبب إلزامي")
+        val d = dao(ctx)
+        val lot = d.getLot(lotId) ?: return OpResult(false, "الدفعة غير موجودة")
+        val qty = InventoryMath.toStorage(count.toDouble())
+        val have = d.getLotOnHandAt(lotId, InventoryIds.LOC_FG_RET)
+        if (qty > have) return OpResult(false, "العدد أكبر من رصيد المرتجعات (" + InventoryMath.toDisplay(maxOf(0L, have)) + ")")
+        if (restock && !isSellable(lot, System.currentTimeMillis())) return OpResult(false, "الدفعة منتهية أو غير مُفرَجة: لا تعود للبيع")
+        val to = if (restock) InventoryIds.LOC_FG else InventoryIds.V_SCRAP
+        val type = if (restock) InventoryTypes.FG_RETURN_RESTOCK else InventoryTypes.FG_RETURN_SCRAP
+        write(ctx, newMove(ctx, lot.itemId, lotId, InventoryIds.LOC_FG_RET, to, qty, "EA", type,
+            if (restock) "RETURN_RESTOCK" else "RETURN_SCRAP", reason.trim(), null, userId))
+        return OpResult(true, if (restock) "أُعيدت العبوات إلى المخزن" else "سُجّلت كهالك")
     }
 
     // ---------- حفظ السجلات الرئيسة ----------

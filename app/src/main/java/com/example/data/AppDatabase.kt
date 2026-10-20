@@ -43,9 +43,11 @@ import androidx.room.RoomDatabase
         StockLot::class,
         StockMove::class,
         InventoryPurchaseOrder::class,
-        InventoryPoLine::class
+        InventoryPoLine::class,
+        InventorySalesOrder::class,
+        InventorySoLine::class
     ],
-    version = 40, // 40: أوامر الشراء (inventory_purchase_orders, inventory_po_lines) | // 39: جداول المخزون (دفتر حركات + سجل المادة + موردون + مواقع + دفعات) | 38: عمود productionLine في formulations
+    version = 41, // 41: طلبات البيع (inventory_sales_orders, inventory_so_lines) | // 40: أوامر الشراء (inventory_purchase_orders, inventory_po_lines) | // 39: جداول المخزون (دفتر حركات + سجل المادة + موردون + مواقع + دفعات) | 38: عمود productionLine في formulations
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -94,6 +96,15 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // ترقية آمنة: جدولا طلبات البيع فقط (يجب أن تطابق الكيانات حرفياً)
+        private val MIGRATION_40_41 = object : androidx.room.migration.Migration(40, 41) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `inventory_sales_orders` (`id` TEXT NOT NULL, `number` TEXT NOT NULL, `customer` TEXT NOT NULL, `status` TEXT NOT NULL, `notes` TEXT NOT NULL, `createdBy` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `inventory_so_lines` (`id` TEXT NOT NULL, `soId` TEXT NOT NULL, `sku` TEXT NOT NULL, `qtyOrdered` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isPending` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_inventory_so_lines_soId` ON `inventory_so_lines` (`soId`)")
+            }
+        }
+
         private const val DB_NAME = "gbr_paints_production_db"
 
         private fun build(appCtx: Context): AppDatabase =
@@ -104,7 +115,7 @@ abstract class AppDatabase : RoomDatabase() {
                         db.execSQL("PRAGMA foreign_keys = ON;")
                     }
                 })
-                .addMigrations(MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40)
+                .addMigrations(MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41)
                 .fallbackToDestructiveMigration()
                 .build()
 

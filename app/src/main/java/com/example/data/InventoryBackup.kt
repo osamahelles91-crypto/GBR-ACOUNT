@@ -8,7 +8,7 @@ import org.json.JSONObject
  * الحركات تُستورد بـ IGNORE (لا تُعدَّل أبداً)، والسجلات الرئيسة بالأحدث updatedAt.
  */
 object InventoryBackup {
-    val TABLES = listOf("inventory_item_profile", "uom_conversions", "inventory_suppliers", "stock_locations", "stock_lots", "stock_moves", "inventory_purchase_orders", "inventory_po_lines")
+    val TABLES = listOf("inventory_item_profile", "uom_conversions", "inventory_suppliers", "stock_locations", "stock_lots", "stock_moves", "inventory_purchase_orders", "inventory_po_lines", "inventory_sales_orders", "inventory_so_lines")
 
     private fun JSONObject.putN(k: String, v: Any?) { put(k, v ?: JSONObject.NULL) }
     private fun JSONObject.strOrNull(k: String): String? = if (isNull(k) || !has(k)) null else optString(k)
@@ -76,6 +76,22 @@ object InventoryBackup {
                 a.put(JSONObject().apply {
                     put("id", l.id); put("poId", l.poId); put("itemId", l.itemId)
                     put("qtyOrdered", l.qtyOrdered); put("unitPrice", l.unitPrice); put("updatedAt", l.updatedAt)
+                })
+            }
+        }
+        out["inventory_sales_orders"] = JSONArray().also { a ->
+            dao.getAllSosSync().forEach { o ->
+                a.put(JSONObject().apply {
+                    put("id", o.id); put("number", o.number); put("customer", o.customer); put("status", o.status)
+                    put("notes", o.notes); put("createdBy", o.createdBy); put("createdAt", o.createdAt); put("updatedAt", o.updatedAt)
+                })
+            }
+        }
+        out["inventory_so_lines"] = JSONArray().also { a ->
+            dao.getAllSoLinesSync().forEach { l ->
+                a.put(JSONObject().apply {
+                    put("id", l.id); put("soId", l.soId); put("sku", l.sku)
+                    put("qtyOrdered", l.qtyOrdered); put("updatedAt", l.updatedAt)
                 })
             }
         }
@@ -214,6 +230,39 @@ object InventoryBackup {
                     dao.upsertPoLine(
                         InventoryPoLine(id = id, poId = o.optString("poId", ""), itemId = o.optString("itemId", ""),
                             qtyOrdered = o.optLong("qtyOrdered", 0L), unitPrice = o.optDouble("unitPrice", 0.0),
+                            updatedAt = if (ts > 0L) ts else System.currentTimeMillis(), isPending = true)
+                    )
+                }
+            }
+        }
+        root.optJSONArray("inventory_sales_orders")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val id = o.optString("id", "")
+                if (id.isBlank()) continue
+                val ts = o.optLong("updatedAt", 0L)
+                val local = dao.soOrNull(id)
+                if (local == null || ts > local.updatedAt) {
+                    dao.upsertSo(
+                        InventorySalesOrder(id = id, number = o.optString("number", ""), customer = o.optString("customer", ""),
+                            status = o.optString("status", "DRAFT"), notes = o.optString("notes", ""),
+                            createdBy = o.optString("createdBy", ""), createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                            updatedAt = if (ts > 0L) ts else System.currentTimeMillis(), isPending = true)
+                    )
+                }
+            }
+        }
+        root.optJSONArray("inventory_so_lines")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val id = o.optString("id", "")
+                if (id.isBlank()) continue
+                val ts = o.optLong("updatedAt", 0L)
+                val local = dao.soLineOrNull(id)
+                if (local == null || ts > local.updatedAt) {
+                    dao.upsertSoLine(
+                        InventorySoLine(id = id, soId = o.optString("soId", ""), sku = o.optString("sku", ""),
+                            qtyOrdered = o.optLong("qtyOrdered", 0L),
                             updatedAt = if (ts > 0L) ts else System.currentTimeMillis(), isPending = true)
                     )
                 }

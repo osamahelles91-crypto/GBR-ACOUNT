@@ -164,3 +164,30 @@ data class InventoryPoLine(
     val updatedAt: Long = System.currentTimeMillis(),
     val isPending: Boolean = true
 )
+
+// ---------------- المرحلة 5: البيع والتسليم ----------------
+
+/** طلب بيع بسيط. الحالات: DRAFT, CONFIRMED (محجوز), CLOSED, CANCELLED؛ «مسلَّم جزئياً/كاملاً» تُشتق من حركات التسليم. */
+@Entity(tableName = "inventory_sales_orders")
+data class InventorySalesOrder(
+    @PrimaryKey val id: String = java.util.UUID.randomUUID().toString(),
+    val number: String,
+    val customer: String,
+    val status: String = "DRAFT",
+    val notes: String = "",
+    val createdBy: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val isPending: Boolean = true
+)
+
+/** سطر طلب بيع: sku المنتج التام (FG|تركيبة|عبوة) والكمية بعدد العبوات ×1000. */
+@Entity(tableName = "inventory_so_lines", indices = [Index("soId")])
+data class InventorySoLine(
+    @PrimaryKey val id: String = java.util.UUID.randomUUID().toString(),
+    val soId: String,
+    val sku: String,
+    val qtyOrdered: Long,
+    val updatedAt: Long = System.currentTimeMillis(),
+    val isPending: Boolean = true
+)
