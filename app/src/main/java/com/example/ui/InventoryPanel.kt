@@ -136,7 +136,7 @@ fun InventoryPanel(viewModel: GbrViewModel) {
 
     val rows by vm.stockRows.collectAsState()
     val message by vm.message.collectAsState()
-    var tab by remember { mutableStateOf(0) }
+    var tab by remember { mutableStateOf(InventoryNav.consume() ?: 0) }
     var selectedItemId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(message) {

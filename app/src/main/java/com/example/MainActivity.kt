@@ -2619,129 +2619,29 @@ fun MainDeckSelector(viewModel: GbrViewModel) {
 
         var showActiveOrdersDialog by remember { mutableStateOf(false) }
 
-        // Redeveloped PREMIUM STATISTICS SUMMARY BANNERS
-        // Completely redesigned to NOT look like buttons, preventing user confusion. 
-        // Built as flat unified read-only status widgets.
-        Box(
+        com.example.ui.HomeAttentionCard { tab ->
+            com.example.ui.InventoryNav.pendingTab = tab
+            viewModel.showSegment("inventory")
+        }
+
+        // إحصاءات مختصرة بسطر واحد (المؤشرات الحيّة في بطاقة «يحتاج انتباهك»)
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    color = Color(0xFFF8FAFC),
-                    shape = RoundedCornerShape(20.dp)
-                )
-                .border(BorderStroke(1.dp, Color(0xFFE2E8F0)), RoundedCornerShape(20.dp))
-                .padding(16.dp)
+                .background(Color(0xFFF8FAFC), RoundedCornerShape(12.dp))
+                .border(BorderStroke(1.dp, Color(0xFFE2E8F0)), RoundedCornerShape(12.dp))
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceAround
         ) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Header of statistics readout (clearly showing it is an informative non-clickable banner)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = t("📊 إحصائيات النظام العامة", "📊 General System Statistics"),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF64748B)
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Box(
-                        modifier = Modifier
-                            .background(Color(0xFFE2E8F0), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = t("محدث تلقائياً 🔄", "Auto-Updated 🔄"),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF475569)
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Stat column 1: Raw materials count
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = t("المواد الخام المسجلة", "Registered Raw Materials"),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF475569)
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .background(GBRBlueMain.copy(alpha = 0.1f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("🧪", fontSize = 11.sp)
-                            }
-                            Text(
-                                text = "$totalRawMaterialsCount",
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.Black,
-                                color = GBRDarkIndigo
-                            )
-                        }
-                    }
-
-                    // Separation Line
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(44.dp)
-                            .background(Color(0xFFCBD5E1))
-                    )
-
-                    // Stat column 2: Approved formulations count
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = t("التركيبات المعتمدة للإنتاج", "Approved Formulations"),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF166534)
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .background(Color(0xFF22C55E).copy(alpha = 0.1f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("🟢", fontSize = 11.sp)
-                            }
-                            Text(
-                                text = "$approvedFormulationsCount",
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.Black,
-                                color = Color(0xFF15803D)
-                            )
-                        }
-                    }
-                }
-            }
+            Text(
+                text = "🧪 " + t("المواد الخام", "Raw materials") + ": $totalRawMaterialsCount",
+                fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF475569)
+            )
+            Text(
+                text = "🟢 " + t("تركيبات معتمدة", "Approved formulations") + ": $approvedFormulationsCount",
+                fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF166534)
+            )
         }
 
         // Quick-Access for Production Orders "In Progress"
@@ -3011,6 +2911,9 @@ fun MainDeckSelector(viewModel: GbrViewModel) {
         }
 
 
+        val homeRole = viewModel.currentUser.collectAsState().value?.role
+        val groupManufacturing: @Composable () -> Unit = {
+            com.example.ui.HomeSectionTitle(t("التصنيع", "Manufacturing"))
         // Row 1: المواد الخام & التركيبات
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -3053,6 +2956,51 @@ fun MainDeckSelector(viewModel: GbrViewModel) {
             onClick = { viewModel.showSegment("production") }
         )
 
+
+        }
+        val groupInventory: @Composable () -> Unit = {
+            com.example.ui.HomeSectionTitle(t("المخزون والجودة", "Inventory & Quality"))
+        // المخزون (دفتر حركات: مواد خام الآن، والمنتج التام في المراحل القادمة)
+        LargeFacilityButton(
+            title = t("المخزون", "Inventory"),
+            subtitle = t("الأرصدة والاستلام والدفعات والمنتج التام والبيع والجرد والتخطيط", "Balances, receiving, lots, finished goods, sales, counts and planning"),
+            icon = Icons.Default.Inventory2,
+            isPrimary = false,
+            iconBgColor = Color(0xFFE4F4F0),
+            iconColor = PlusTeal,
+            onClick = { viewModel.showSegment("inventory") }
+        )
+
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { com.example.ui.InventoryNav.pendingTab = 2; viewModel.showSegment("inventory") },
+                modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+            ) { Text(t("استلام", "Receive"), fontSize = 12.sp, maxLines = 1) }
+            OutlinedButton(
+                onClick = { com.example.ui.InventoryNav.pendingTab = 7; viewModel.showSegment("inventory") },
+                modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+            ) { Text(t("جرد", "Count"), fontSize = 12.sp, maxLines = 1) }
+            OutlinedButton(
+                onClick = { com.example.ui.InventoryNav.pendingTab = 12; viewModel.showSegment("inventory") },
+                modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+            ) { Text(t("تخطيط", "Planning"), fontSize = 12.sp, maxLines = 1) }
+        }
+        // Row 4: إدارة المختبر (Laboratory Management)
+        LargeFacilityButton(
+            title = t("🧪 قسم المختبر وضبط الجودة", "🧪 Laboratory & Quality Control"),
+            subtitle = t("إدارة جلسات الفحوصات المقارنة والأحادية والأرشفة المنظمة للأقسام", "Manage single/comparative test sessions with organized archives"),
+            icon = Icons.Default.Science,
+            isPrimary = true,
+            iconBgColor = Color(0xFFEFF6FF),
+            iconColor = Color(0xFF0056B3),
+            onClick = { viewModel.showSegment("laboratory_management") }
+        )
+
+
+        }
+        val groupReports: @Composable () -> Unit = {
+            com.example.ui.HomeSectionTitle(t("التقارير والتطوير", "Reports & R&D"))
         // Row 3: التقارير & الأبحاث والتطوير (R&D)
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -3080,28 +3028,10 @@ fun MainDeckSelector(viewModel: GbrViewModel) {
             )
         }
 
-        // المخزون (دفتر حركات: مواد خام الآن، والمنتج التام في المراحل القادمة)
-        LargeFacilityButton(
-            title = t("المخزون", "Inventory"),
-            subtitle = t("أرصدة المواد الخام وبطاقة الصنف والتقييم وإعادة الطلب", "Raw-material balances, item card, valuation and reorder"),
-            icon = Icons.Default.Inventory2,
-            isPrimary = false,
-            iconBgColor = Color(0xFFE4F4F0),
-            iconColor = PlusTeal,
-            onClick = { viewModel.showSegment("inventory") }
-        )
 
-        // Row 4: إدارة المختبر (Laboratory Management)
-        LargeFacilityButton(
-            title = t("🧪 قسم المختبر وضبط الجودة", "🧪 Laboratory & Quality Control"),
-            subtitle = t("إدارة جلسات الفحوصات المقارنة والأحادية والأرشفة المنظمة للأقسام", "Manage single/comparative test sessions with organized archives"),
-            icon = Icons.Default.Science,
-            isPrimary = true,
-            iconBgColor = Color(0xFFEFF6FF),
-            iconColor = Color(0xFF0056B3),
-            onClick = { viewModel.showSegment("laboratory_management") }
-        )
-
+        }
+        val groupSystem: @Composable () -> Unit = {
+            com.example.ui.HomeSectionTitle(t("النظام", "System"))
         // Row 5: التحكم بالمعدات - Full width prominent card
         LargeFacilityButton(
             title = t("التحكم بالمعدات", "Equipment Control"),
@@ -3123,6 +3053,13 @@ fun MainDeckSelector(viewModel: GbrViewModel) {
             iconColor = GBRPinkAccent,
             onClick = { viewModel.showSegment("settings") }
         )
+
+        }
+        val groupOrder = if (homeRole == "المخزن" || homeRole == "المختبر")
+            listOf(groupInventory, groupManufacturing, groupReports, groupSystem)
+        else
+            listOf(groupManufacturing, groupInventory, groupReports, groupSystem)
+        groupOrder.forEach { g -> g() }
     }
     }
 }
