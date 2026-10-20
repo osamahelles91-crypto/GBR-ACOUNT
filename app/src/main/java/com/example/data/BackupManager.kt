@@ -197,6 +197,12 @@ object BackupManager {
                 "operational_alerts",
                 "recycle_bin"
             )
+        ),
+        BackupSection(
+            key = "inventory",
+            titleAr = "المخزون: سجل الحركات (دفتر الأستاذ) وسجلات المواد والموردون والمواقع والدفعات",
+            titleEn = "Inventory: Stock Ledger, Item Profiles, Suppliers & Locations",
+            tables = InventoryBackup.TABLES
         )
     )
 

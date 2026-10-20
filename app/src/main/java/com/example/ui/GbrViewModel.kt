@@ -2865,6 +2865,15 @@ class GbrViewModel(application: Application) : AndroidViewModel(application) {
             root.put("recycle_bin", arr)
         }
 
+        // 29. inventory (دفتر حركات المخزون + السجلات الرئيسة)
+        if (activeTables.contains("stock_moves")) {
+            try {
+                com.example.data.InventoryBackup.exportAll(database.inventoryDao()).forEach { (k, v) -> root.put(k, v) }
+            } catch (e: Exception) {
+                android.util.Log.e("GBR_Backup", "Inventory export failed", e)
+            }
+        }
+
         root.toString(2)
     }
 
@@ -2887,6 +2896,17 @@ class GbrViewModel(application: Application) : AndroidViewModel(application) {
             }
             val database = AppDatabase.getDatabase(getApplication())
             val dao = database.gbrDao()
+
+            // دفتر المخزون غير قابل للتعديل: نحفظ نسخة منه قبل المسح الكامل ونعيدها بعده (الإضافة فقط، لا فقدان).
+            var inventorySnapshot: JSONObject? = null
+            if (importStrategy == 2) {
+                try {
+                    val snap = com.example.data.InventoryBackup.exportAll(database.inventoryDao())
+                    inventorySnapshot = JSONObject().also { r -> snap.forEach { (k, v) -> r.put(k, v) } }
+                } catch (e: java.lang.Exception) {
+                    android.util.Log.e("GBR_Import", "Inventory snapshot failed", e)
+                }
+            }
 
             if (importStrategy == 2) {
                 try {
@@ -3475,6 +3495,13 @@ class GbrViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     )
                 }
+            }
+
+            // المخزون: إعادة ما حُفظ قبل المسح، ثم استيراد ما في النسخة (حركات موجودة تُتجاهل)
+            inventorySnapshot?.let { com.example.data.InventoryBackup.importAll(database.inventoryDao(), it) }
+            val importInventory = if (selectedSectionKeys.isNotEmpty()) selectedSectionKeys.contains("inventory") else true
+            if (importInventory && root.has("stock_moves")) {
+                com.example.data.InventoryBackup.importAll(database.inventoryDao(), root)
             }
 
             true
