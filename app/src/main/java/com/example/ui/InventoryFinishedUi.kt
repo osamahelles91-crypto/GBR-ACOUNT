@@ -49,6 +49,7 @@ internal fun FinishedGoodsTab(vm: InventoryViewModel, canEdit: Boolean, canRelea
     var filter by remember { mutableStateOf("ACTIVE") }
     var dialogLot by remember { mutableStateOf<FgLotRow?>(null) }
     var action by remember { mutableStateOf(FgAction.RELEASE) }
+    var traceLines by remember { mutableStateOf<List<String>?>(null) }
 
     val now = System.currentTimeMillis()
     fun expired(r: FgLotRow) = r.lot.expiryDate != null && r.lot.expiryDate < now
@@ -116,6 +117,7 @@ internal fun FinishedGoodsTab(vm: InventoryViewModel, canEdit: Boolean, canRelea
                         )
                         if (sellable(r)) Text("✔ قابلة للبيع", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF15803D))
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            TextButton(onClick = { traceLines = vm.traceFinished(r.lot.id) }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("تتبع", fontSize = 12.sp) }
                             if (canRelease && (r.lot.status == "QC_HOLD" || r.lot.status == "REWORK") && r.qcCount > 0.0) {
                                 Button(onClick = { dialogLot = r; action = FgAction.RELEASE }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) { Text("إفراج", fontSize = 12.sp) }
                                 if (r.lot.status == "QC_HOLD") {
@@ -134,6 +136,8 @@ internal fun FinishedGoodsTab(vm: InventoryViewModel, canEdit: Boolean, canRelea
             }
         }
     }
+
+    traceLines?.let { ls -> TraceDialog("تتبع الدفعة", ls) { traceLines = null } }
 
     dialogLot?.let { r ->
         var text by remember(r.lot.id, action) { mutableStateOf("") }

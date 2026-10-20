@@ -7,6 +7,8 @@ import com.example.data.AppDatabase
 import com.example.data.InventoryIds
 import com.example.data.InventoryItemProfile
 import com.example.data.InventoryPoLine
+import com.example.data.InventorySalesOrder
+import com.example.data.InventorySoLine
 import com.example.data.InventoryPurchaseOrder
 import com.example.data.LotLocQty
 import com.example.data.StockLot
@@ -79,8 +81,11 @@ data class FgLotRow(
     val producedCount: Int,
     val qcCount: Double,        // في حجر الجودة
     val availCount: Double,     // في مخزن المنتج التام (مُفرَج)
-    val orderYieldPct: Double   // إنتاجية الأمر % = المعبأ ÷ النظري
-)
+    val orderYieldPct: Double,  // إنتاجية الأمر % = المعبأ ÷ النظري
+    val retCount: Double = 0.0  // في حجر المرتجعات
+) {
+    val skuName: String get() = product + " — " + pack
+}
 
 class InventoryViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
@@ -269,10 +274,113 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
                     producedCount = nc.second,
                     qcCount = InventoryMath.toDisplay(balMap[l.id + "|" + InventoryIds.LOC_FG_QC] ?: 0L),
                     availCount = InventoryMath.toDisplay(balMap[l.id + "|" + InventoryIds.LOC_FG] ?: 0L),
-                    orderYieldPct = if (theo > 0.0) (packedByOrder[order] ?: 0.0) / theo * 100.0 else 0.0
+                    orderYieldPct = if (theo > 0.0) (packedByOrder[order] ?: 0.0) / theo * 100.0 else 0.0,
+                    retCount = InventoryMath.toDisplay(balMap[l.id + "|" + InventoryIds.LOC_FG_RET] ?: 0L)
                 )
             }.sortedWith(compareBy<FgLotRow> { it.lot.expiryDate ?: Long.MAX_VALUE }.thenBy { it.lot.receivedAt })
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val salesOrders: StateFlow<List<InventorySalesOrder>> =
+        dao.observeSos().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val soLines: StateFlow<List<InventorySoLine>> =
+        dao.observeSoLines().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** المسلَّم لكل سطر طلب (بعد استبعاد المعكوس)، بوحدة التخزين، بمفتاح مرجع السطر. */
+    val deliveredByRef: StateFlow<Map<String, Long>> =
+        allMoves.map { mv ->
+            val reversed = mv.mapNotNull { it.reversesMoveId }.toSet()
+            mv.filter { it.type == "FG_DELIVERY" && it.moveId !in reversed }
+                .groupBy { it.refDoc }.mapValues { e -> e.value.sumOf { it.qtyBase } }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    /** المتاح للوعد لكل SKU (عبوات): القابل للبيع − المحجوز لطلبات مؤكَّدة. */
+    val skuAvailability: StateFlow<Map<String, Pair<Double, Double>>> =
+        combine(fgLots, salesOrders, soLines, deliveredByRef) { fg, sos, lines, delivered ->
+            val now = System.currentTimeMillis()
+            val sellable = HashMap<String, Double>()
+            for (r in fg) {
+                if (r.lot.status == "RELEASED" && (r.lot.expiryDate == null || r.lot.expiryDate > now) && r.availCount > 0.0) {
+                    sellable[r.lot.itemId] = (sellable[r.lot.itemId] ?: 0.0) + r.availCount
+                }
+            }
+            val confirmed = sos.filter { it.status == "CONFIRMED" }.map { it.id }.toSet()
+            val reserved = HashMap<String, Double>()
+            for (l in lines) {
+                if (l.soId !in confirmed) continue
+                val rem = l.qtyOrdered - (delivered["SO:" + l.soId + ":" + l.id] ?: 0L)
+                if (rem > 0L) reserved[l.sku] = (reserved[l.sku] ?: 0.0) + InventoryMath.toDisplay(rem)
+            }
+            val skus = (sellable.keys + reserved.keys + fg.map { it.lot.itemId }).toSet()
+            skus.associateWith { Pair(sellable[it] ?: 0.0, reserved[it] ?: 0.0) }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    /** تتبع دفعة منتج تام: للخلف (الأمر ودفعات المواد المصروفة) وللأمام (العملاء والمرتجعات). */
+    fun traceFinished(lotId: String): List<String> {
+        val moves = allMoves.value
+        val reversed = moves.mapNotNull { it.reversesMoveId }.toSet()
+        val live = moves.filter { it.moveId !in reversed }
+        val lot = lots.value.firstOrNull { it.id == lotId } ?: return listOf("الدفعة غير موجودة")
+        val out = ArrayList<String>()
+        val fgRow = fgLots.value.firstOrNull { it.lot.id == lotId }
+        out.add("الدفعة: " + lot.lotNo + (if (fgRow != null) " — " + fgRow.skuName else ""))
+        val orderRef = live.firstOrNull { it.lotId == lotId && it.type == "FG_RECEIPT" }?.refDoc
+        out.add("— للخلف —")
+        if (orderRef == null) {
+            out.add("لا حركة استلام إنتاجي مرتبطة")
+        } else {
+            out.add("الأمر: " + (fgRow?.orderNumber ?: orderRef))
+            val nameOf = materials.value.associate { it.id to it.name }
+            val lotOf = lots.value.associateBy { it.id }
+            val issued = live.filter { it.type == "ISSUE" && it.refDoc == orderRef }
+            if (issued.isEmpty()) out.add("لا صرف مواد مسجَّل لهذا الأمر")
+            issued.forEach { m ->
+                val rl = m.lotId?.let { lotOf[it] }
+                out.add("• " + (nameOf[m.itemId] ?: m.itemId) + " — " + (rl?.lotNo ?: "بلا دفعة") +
+                    (if (rl != null && rl.supplierLotNo.isNotBlank()) " (دفعة المورد " + rl.supplierLotNo + ")" else "") +
+                    " — " + InventoryMath.toDisplay(m.qtyBase))
+            }
+        }
+        out.add("— للأمام —")
+        val sos = salesOrders.value.associateBy { it.id }
+        val deliveries = live.filter { it.lotId == lotId && it.type == "FG_DELIVERY" }
+        if (deliveries.isEmpty()) out.add("لا تسليمات بعد")
+        deliveries.forEach { m ->
+            val so = sos[m.refDoc.split(":").getOrNull(1) ?: ""]
+            out.add("• " + (so?.customer ?: "عميل غير معروف") + " (" + (so?.number ?: m.refDoc) + ") — " + InventoryMath.toDisplay(m.qtyBase) + " عبوة — " + fmtDateTime(m.serverCreatedAt ?: m.clientCreatedAt))
+        }
+        val returned = live.filter { it.lotId == lotId && it.type == "FG_RETURN" }
+        if (returned.isNotEmpty()) out.add("مرتجعات: " + InventoryMath.toDisplay(returned.sumOf { it.qtyBase }) + " عبوة")
+        return out
+    }
+
+    /** استدعاء دفعة مادة خام: الأوامر التي استهلكتها ← دفعات المنتج التام الناتجة ← العملاء. */
+    fun traceRawLot(lotId: String): List<String> {
+        val moves = allMoves.value
+        val reversed = moves.mapNotNull { it.reversesMoveId }.toSet()
+        val live = moves.filter { it.moveId !in reversed }
+        val lot = lots.value.firstOrNull { it.id == lotId } ?: return listOf("الدفعة غير موجودة")
+        val out = ArrayList<String>()
+        out.add("الدفعة: " + lot.lotNo + (if (lot.supplierLotNo.isNotBlank()) " (دفعة المورد " + lot.supplierLotNo + ")" else ""))
+        val refs = live.filter { it.lotId == lotId && it.type == "ISSUE" }.map { it.refDoc }.toSet()
+        if (refs.isEmpty()) out.add("لم تُستهلك في أي أمر إنتاج مسجَّل")
+        val sos = salesOrders.value.associateBy { it.id }
+        for (ref in refs) {
+            val fgReceipts = live.filter { it.type == "FG_RECEIPT" && it.refDoc == ref }
+            val orderNo = fgLots.value.firstOrNull { r -> fgReceipts.any { it.lotId == r.lot.id } }?.orderNumber ?: ref
+            out.add("أمر: " + orderNo)
+            if (fgReceipts.isEmpty()) out.add("   لا دفعات منتج تام مرتبطة")
+            fgReceipts.forEach { rc ->
+                val row = fgLots.value.firstOrNull { it.lot.id == rc.lotId }
+                out.add("   ← منتج تام: " + (row?.lot?.lotNo ?: rc.lotId) + " (" + (row?.skuName ?: "") + ")")
+                live.filter { it.lotId == rc.lotId && it.type == "FG_DELIVERY" }.forEach { dm ->
+                    val so = sos[dm.refDoc.split(":").getOrNull(1) ?: ""]
+                    out.add("      ← عميل: " + (so?.customer ?: "غير معروف") + " (" + (so?.number ?: dm.refDoc) + ") — " + InventoryMath.toDisplay(dm.qtyBase) + " عبوة")
+                }
+            }
+        }
+        return out
+    }
 
     val message = MutableStateFlow<String?>(null)
 
@@ -386,6 +494,26 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun adjustFinished(lotId: String, count: Int, reason: String, note: String, user: String) {
         viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.adjustFinished(getApplication(), lotId, count, reason, note, user)) }
+    }
+
+    fun createSo(customer: String, notes: String, user: String, lines: List<Pair<String, Int>>) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.createSo(getApplication(), customer, notes, user, lines)) }
+    }
+
+    fun setSoStatus(soId: String, status: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.setSoStatus(getApplication(), soId, status)) }
+    }
+
+    fun deliver(soLineId: String, count: Int, overrideLotId: String?, overrideReason: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.deliver(getApplication(), soLineId, count, overrideLotId, overrideReason, user)) }
+    }
+
+    fun returnFromCustomer(soLineId: String, lotId: String, count: Int, reason: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.returnFromCustomer(getApplication(), soLineId, lotId, count, reason, user)) }
+    }
+
+    fun dispositionReturn(lotId: String, count: Int, restock: Boolean, reason: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.dispositionReturn(getApplication(), lotId, count, restock, reason, user)) }
     }
 
     fun syncNow() {

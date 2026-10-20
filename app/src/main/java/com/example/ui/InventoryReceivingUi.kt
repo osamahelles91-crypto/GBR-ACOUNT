@@ -362,6 +362,7 @@ internal fun LotsTab(vm: InventoryViewModel, rows: List<StockRow>, canRelease: B
     var filter by remember { mutableStateOf("ACTIVE") }
     var qrFor by remember { mutableStateOf<StockLot?>(null) }
     var rejectFor by remember { mutableStateOf<StockLot?>(null) }
+    var traceLines by remember { mutableStateOf<List<String>?>(null) }
 
     val now = System.currentTimeMillis()
     val nameOf = rows.associate { it.item.id to it.item.name }
@@ -441,6 +442,7 @@ internal fun LotsTab(vm: InventoryViewModel, rows: List<StockRow>, canRelease: B
                         if (l.id in fefoFirst) Text("◀ الأولى بالصرف (FEFO)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF15803D))
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             OutlinedButton(onClick = { qrFor = l }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) { Text("ملصق QR", fontSize = 12.sp) }
+                            TextButton(onClick = { traceLines = vm.traceRawLot(l.id) }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("تتبع", fontSize = 12.sp) }
                             if (canRelease && l.status == "QUARANTINE" && quarQty(l) > 0L) {
                                 Button(onClick = { vm.releaseLot(l.id, userName) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) { Text("إفراج", fontSize = 12.sp) }
                                 TextButton(onClick = { rejectFor = l }, contentPadding = PaddingValues(horizontal = 6.dp)) {
@@ -453,6 +455,8 @@ internal fun LotsTab(vm: InventoryViewModel, rows: List<StockRow>, canRelease: B
             }
         }
     }
+
+    traceLines?.let { ls -> TraceDialog("تتبع الدفعة (استدعاء)", ls) { traceLines = null } }
 
     qrFor?.let { l ->
         val clipboard = LocalClipboardManager.current

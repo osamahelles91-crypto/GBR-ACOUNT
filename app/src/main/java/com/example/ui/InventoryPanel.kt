@@ -81,6 +81,10 @@ internal fun moveTypeLabel(t: String) = when (t) {
     InventoryTypes.FG_RELEASE -> "إفراج منتج تام"
     InventoryTypes.FG_REJECT -> "رفض منتج تام"
     InventoryTypes.FG_ADJUST -> "إخراج منتج تام"
+    InventoryTypes.FG_DELIVERY -> "تسليم لعميل"
+    InventoryTypes.FG_RETURN -> "مرتجع من عميل"
+    InventoryTypes.FG_RETURN_RESTOCK -> "مرتجع: إعادة للمخزن"
+    InventoryTypes.FG_RETURN_SCRAP -> "مرتجع: هالك"
     else -> t
 }
 
@@ -144,7 +148,7 @@ fun InventoryPanel(viewModel: GbrViewModel) {
 
     BackHandler(enabled = !isWarehouseRole) { viewModel.showSegment(null) }
 
-    val titles = listOf("الأرصدة", "بطاقة الصنف", "الاستلام والشراء", "الدفعات وFEFO", "الإنتاج والتوفر", "المنتج التام", "إعداد المواد", "الموردون والمواقع", "التقييم وABC", "الكتالوج")
+    val titles = listOf("الأرصدة", "بطاقة الصنف", "الاستلام والشراء", "الدفعات وFEFO", "الإنتاج والتوفر", "المنتج التام", "البيع والتسليم", "إعداد المواد", "الموردون والمواقع", "التقييم وABC", "الكتالوج")
 
     Scaffold(
         topBar = {
@@ -180,9 +184,10 @@ fun InventoryPanel(viewModel: GbrViewModel) {
                     3 -> LotsTab(vm, rows, canRelease, userName)
                     4 -> ProductionLinkTab(vm, canEdit, userName)
                     5 -> FinishedGoodsTab(vm, canEdit, canRelease, userName)
-                    6 -> InventorySetupTab(vm, rows, canEdit)
-                    7 -> InventoryPartiesTab(vm, canEdit)
-                    8 -> ReportsTab(vm, rows)
+                    6 -> SalesTab(vm, canEdit, canApprove, canRelease, userName)
+                    7 -> InventorySetupTab(vm, rows, canEdit)
+                    8 -> InventoryPartiesTab(vm, canEdit)
+                    9 -> ReportsTab(vm, rows)
                     else -> com.example.MaterialsPanel(viewModel = viewModel)
                 }
             }
