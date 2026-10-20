@@ -4,7 +4,12 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
+import com.example.data.InventoryIds
 import com.example.data.InventoryItemProfile
+import com.example.data.InventoryPoLine
+import com.example.data.InventoryPurchaseOrder
+import com.example.data.LotLocQty
+import com.example.data.StockLot
 import com.example.data.InventoryManager
 import com.example.data.InventoryMath
 import com.example.data.InventorySupplier
@@ -32,8 +37,10 @@ data class StockRow(
     val qtyStorage: Long,
     val avgCost: Double,
     val value: Double,
-    val status: String        // NO_BALANCE, OK, REORDER, LOW, NEGATIVE
+    val status: String,       // NO_BALANCE, OK, REORDER, LOW, NEGATIVE
+    val quarantineStorage: Long = 0L   // في الحجر (لا يُحتسب ضمن المتاح)
 ) {
+    val quarantineDisplay: Double get() = InventoryMath.toDisplay(quarantineStorage)
     val qtyDisplay: Double get() = InventoryMath.toDisplay(qtyStorage)
     val uom: String get() = profile?.baseUom ?: "KG"
 }
@@ -79,7 +86,10 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
                 val p = profs[m.id]
                 val rows = InventoryMath.replay(itemMoves, m.price)
                 val last = rows.lastOrNull()
-                val qty = last?.runningQty ?: 0L
+                val quar = itemMoves.sumOf { mv ->
+                    (if (mv.toLocId == InventoryIds.LOC_QUAR) mv.qtyBase else 0L) - (if (mv.fromLocId == InventoryIds.LOC_QUAR) mv.qtyBase else 0L)
+                }
+                val qty = (last?.runningQty ?: 0L) - quar   // المتاح = الإجمالي الفعلي − الحجر
                 val avg = last?.avgCostAfter ?: m.price
                 val qtyDisp = InventoryMath.toDisplay(qty)
                 val status = when {
@@ -89,7 +99,7 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
                     p != null && p.reorderPoint > 0.0 && qtyDisp <= p.reorderPoint -> "REORDER"
                     else -> "OK"
                 }
-                StockRow(m, p, itemMoves.isNotEmpty(), qty, avg, qtyDisp * avg, status)
+                StockRow(m, p, itemMoves.isNotEmpty(), qty, avg, qtyDisp * avg, status, quar)
             }.sortedBy { it.item.name }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -120,6 +130,26 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
             val ids = orders.filter { it.status == "مكتمل" && (if (it.endTime > 0L) it.endTime else it.createdAt) >= cutoff }.map { it.id }.toSet()
             items.any { it.productionOrderId in ids }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val lots: StateFlow<List<StockLot>> =
+        dao.observeLots().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val lotBalances: StateFlow<List<LotLocQty>> =
+        dao.observeLotBalances().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val purchaseOrders: StateFlow<List<InventoryPurchaseOrder>> =
+        dao.observePos().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val poLines: StateFlow<List<InventoryPoLine>> =
+        dao.observePoLines().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** المستلم لكل سطر أمر (بعد استبعاد المعكوس) يُحسب من الحركات. */
+    val receivedByRef: StateFlow<Map<String, Long>> =
+        allMoves.map { mv ->
+            val reversed = mv.mapNotNull { it.reversesMoveId }.toSet()
+            mv.filter { it.type == "RECEIPT" && it.moveId !in reversed }
+                .groupBy { it.refDoc }.mapValues { e -> e.value.sumOf { it.qtyBase } }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     val message = MutableStateFlow<String?>(null)
 
@@ -188,6 +218,31 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun saveLocation(l: StockLocation) {
         viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.saveLocation(getApplication(), l)) }
+    }
+
+    fun createPo(supplierId: String, notes: String, user: String, lines: List<Triple<String, Double, Double>>) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.createPo(getApplication(), supplierId, notes, user, lines)) }
+    }
+
+    fun setPoStatus(poId: String, status: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.setPoStatus(getApplication(), poId, status)) }
+    }
+
+    fun receive(
+        itemId: String, uom: String, qty: Double, poLineId: String?, supplierId: String?, supplierLotNo: String,
+        mfg: Long?, expiry: Long?, cost: Double?, user: String
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            report(InventoryManager.receive(getApplication(), itemId, uom, qty, poLineId, supplierId, supplierLotNo, mfg, expiry, cost, user))
+        }
+    }
+
+    fun releaseLot(lotId: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.releaseLot(getApplication(), lotId, user)) }
+    }
+
+    fun rejectLot(lotId: String, reason: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.rejectLot(getApplication(), lotId, reason, user)) }
     }
 
     fun syncNow() {

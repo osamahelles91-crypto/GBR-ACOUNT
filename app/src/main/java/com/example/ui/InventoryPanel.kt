@@ -118,6 +118,8 @@ fun InventoryPanel(viewModel: GbrViewModel) {
     val role = user?.role
     val isWarehouseRole = role == "المخزن"
     val canEdit = role == "مدير النظام" || role == "المخزن" || role == "مشرف الإنتاج" || user?.isSupervisor == true
+    val canApprove = role == "مدير النظام" || role == "مشرف الإنتاج" || user?.isSupervisor == true
+    val canRelease = canApprove || role == "المختبر"
     val userName = user?.fullName?.takeIf { it.isNotBlank() } ?: user?.name ?: ""
 
     val rows by vm.stockRows.collectAsState()
@@ -134,7 +136,7 @@ fun InventoryPanel(viewModel: GbrViewModel) {
 
     BackHandler(enabled = !isWarehouseRole) { viewModel.showSegment(null) }
 
-    val titles = listOf("الأرصدة", "بطاقة الصنف", "إعداد المواد", "الموردون والمواقع", "التقييم وABC", "الكتالوج")
+    val titles = listOf("الأرصدة", "بطاقة الصنف", "الاستلام والشراء", "الدفعات وFEFO", "إعداد المواد", "الموردون والمواقع", "التقييم وABC", "الكتالوج")
 
     Scaffold(
         topBar = {
@@ -166,9 +168,11 @@ fun InventoryPanel(viewModel: GbrViewModel) {
                 when (tab) {
                     0 -> StockTab(vm, rows, canEdit, userName) { id -> selectedItemId = id; tab = 1 }
                     1 -> LedgerTab(vm, rows, selectedItemId, canEdit, userName) { selectedItemId = it }
-                    2 -> InventorySetupTab(vm, rows, canEdit)
-                    3 -> InventoryPartiesTab(vm, canEdit)
-                    4 -> ReportsTab(vm, rows)
+                    2 -> ReceivingTab(vm, rows, canEdit, canApprove, userName)
+                    3 -> LotsTab(vm, rows, canRelease, userName)
+                    4 -> InventorySetupTab(vm, rows, canEdit)
+                    5 -> InventoryPartiesTab(vm, canEdit)
+                    6 -> ReportsTab(vm, rows)
                     else -> com.example.MaterialsPanel(viewModel = viewModel)
                 }
             }
@@ -238,9 +242,12 @@ private fun StockTab(
                         }
                         if (r.hasMoves) {
                             Text(
-                                "الرصيد: ${fmtQty(r.qtyDisplay)} ${uomLabel(r.uom)}   |   متوسط التكلفة: ${fmtMoney(r.avgCost)}   |   القيمة: ${fmtMoney(r.value)}",
+                                "المتاح: ${fmtQty(r.qtyDisplay)} ${uomLabel(r.uom)}   |   متوسط التكلفة: ${fmtMoney(r.avgCost)}   |   القيمة: ${fmtMoney(r.value)}",
                                 fontSize = 12.sp, color = Color(0xFF334155)
                             )
+                            if (r.quarantineStorage > 0L) {
+                                Text("🔒 في الحجر (غير متاح): ${fmtQty(r.quarantineDisplay)} ${uomLabel(r.uom)}", fontSize = 11.sp, color = Color(0xFFB45309))
+                            }
                         } else {
                             Text("لم يُسجَّل رصيد افتتاحي بعد", fontSize = 12.sp, color = Color.Gray)
                         }
