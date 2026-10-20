@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.InventoryIds
 import com.example.data.InventoryItemProfile
+import com.example.data.InventoryCount
+import com.example.data.InventoryCountLine
 import com.example.data.InventoryPoLine
 import com.example.data.InventorySalesOrder
 import com.example.data.InventorySoLine
@@ -85,6 +87,19 @@ data class FgLotRow(
     val retCount: Double = 0.0  // في حجر المرتجعات
 ) {
     val skuName: String get() = product + " — " + pack
+}
+
+/** تكلفة مواد أمر مكتمل: الفعلي من الدفتر (بمتوسط وقت الصرف) مقابل المعياري (كمية الأمر × سعر لحظة الإنشاء). */
+data class OrderCostRow(
+    val orderNumber: String,
+    val product: String,
+    val actual: Double,
+    val standard: Double,
+    val kg: Double,
+    val completedAt: Long
+) {
+    val variance: Double get() = actual - standard
+    val actualPerKg: Double get() = if (kg > 0.0) actual / kg else 0.0
 }
 
 class InventoryViewModel(application: Application) : AndroidViewModel(application) {
@@ -382,6 +397,54 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
         return out
     }
 
+    val counts: StateFlow<List<InventoryCount>> =
+        dao.observeCounts().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val countLines: StateFlow<List<InventoryCountLine>> =
+        dao.observeCountLines().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** تكلفة الأوامر: فعلي من الدفتر مقابل معياري. تُحسب لأوامر لها صرف قائم فقط. */
+    val orderCosts: StateFlow<List<OrderCostRow>> =
+        combine(gdao.getAllProductionOrders(), gdao.getAllProductionOrderItems(), allMoves, materials) { orders, items, moves, mats ->
+            val priceBy = mats.associate { it.id to it.price }
+            val avgAfter = HashMap<String, Double>()
+            for ((itemId, ms) in moves.groupBy { it.itemId }) {
+                if (itemId.startsWith("FG|")) continue
+                InventoryMath.replay(ms, priceBy[itemId] ?: 0.0).forEach { avgAfter[it.move.moveId] = it.avgCostAfter }
+            }
+            val reversed = moves.mapNotNull { it.reversesMoveId }.toSet()
+            val issues = moves.filter { it.type == "ISSUE" && it.moveId !in reversed && it.refDoc.startsWith("ORD:") }
+                .groupBy { it.refDoc.removePrefix("ORD:") }
+            val itemsBy = items.groupBy { it.productionOrderId }
+            orders.filter { it.id in issues.keys }.map { o ->
+                val ms = issues[o.id].orEmpty()
+                val actual = ms.sumOf { InventoryMath.toDisplay(it.qtyBase) * (avgAfter[it.moveId] ?: 0.0) }
+                val issued = ms.map { it.itemId }.toSet()
+                val standard = itemsBy[o.id].orEmpty().filter { it.rawMaterialId in issued }.sumOf { it.calculatedQuantity * it.rawMaterialPrice }
+                OrderCostRow(o.orderNumber, o.formulationName, actual, standard, o.requiredWeightKg,
+                    if (o.endTime > 0L) o.endTime else o.createdAt)
+            }.sortedByDescending { it.completedAt }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** قيمة مخزون المواد الخام بتاريخ معيّن: إعادة تشغيل الدفتر حتى ذلك الوقت (إجمالي فعلي يشمل الحجر). */
+    fun valuationAsOf(ts: Long): List<Triple<String, Double, Double>> {
+        val priceBy = materials.value.associate { it.id to it.price }
+        val nameBy = materials.value.associate { it.id to it.name }
+        return allMoves.value
+            .filter { !it.itemId.startsWith("FG|") && (it.serverCreatedAt ?: it.clientCreatedAt) <= ts }
+            .groupBy { it.itemId }
+            .mapNotNull { (id, ms) ->
+                val last = InventoryMath.replay(ms, priceBy[id] ?: 0.0).lastOrNull()
+                if (last == null) {
+                    null
+                } else {
+                    val q = InventoryMath.toDisplay(last.runningQty)
+                    if (q == 0.0) null else Triple(nameBy[id] ?: id, q, q * last.avgCostAfter)
+                }
+            }
+            .sortedByDescending { it.third }
+    }
+
     val message = MutableStateFlow<String?>(null)
 
     init {
@@ -514,6 +577,26 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun dispositionReturn(lotId: String, count: Int, restock: Boolean, reason: String, user: String) {
         viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.dispositionReturn(getApplication(), lotId, count, restock, reason, user)) }
+    }
+
+    fun createCount(scope: String, itemIds: List<String>, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.createCount(getApplication(), scope, itemIds, user)) }
+    }
+
+    fun saveCountLine(lineId: String, qty: Double, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.saveCountLine(getApplication(), lineId, qty, user)) }
+    }
+
+    fun submitCount(countId: String, user: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.submitCount(getApplication(), countId, user)) }
+    }
+
+    fun approveCount(countId: String, approver: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.approveCount(getApplication(), countId, approver)) }
+    }
+
+    fun cancelCount(countId: String) {
+        viewModelScope.launch(Dispatchers.IO) { report(InventoryManager.cancelCount(getApplication(), countId)) }
     }
 
     fun syncNow() {
