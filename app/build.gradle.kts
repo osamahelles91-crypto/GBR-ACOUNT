@@ -14,8 +14,8 @@ android {
     applicationId = "com.aistudio.gbrproduction.vsiyny4.app.ejttgq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 57
-    versionName = "1.2.34"
+    versionCode = 58
+    versionName = "1.2.35"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -109,6 +109,7 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
+  implementation("com.google.zxing:core:3.5.3") // رمز QR لملصق الدفعة (توليد فقط)
   implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)
   implementation(libs.kotlinx.coroutines.android)
