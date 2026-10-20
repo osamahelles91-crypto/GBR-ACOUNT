@@ -1,0 +1,61 @@
+<resources>
+    <string name="app_name">GBR Pro</string>
+    
+    <!-- Authentication -->
+    <string name="login_title">Login</string>
+    <string name="username_label">Username</string>
+    <string name="password_label">Password</string>
+    <string name="login_button">Login</string>
+    <string name="username_hint">Enter username (admin)</string>
+    <string name="password_hint">Enter password (1234)</string>
+    <string name="logout_button">Logout</string>
+    
+    <!-- Main screen -->
+    <string name="factory_operator_title">Factory Operator Control Board</string>
+    <string name="section_materials">Raw Materials</string>
+    <string name="section_formulations">Formulations</string>
+    <string name="section_production_start">Production</string>
+    
+    <!-- Sub-segments context -->
+    <string name="materials_title">Site Materials Management</string>
+    <string name="add_material">Add New Raw Material</string>
+    <string name="material_name">Material Name</string>
+    <string name="material_code">Material Code (SKU)</string>
+    <string name="material_unit">Default Base Unit</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="delete">Delete</string>
+    
+    <!-- Formulation context -->
+    <string name="formulations_title">Formulations Guide</string>
+    <string name="add_formulation">Add New Formulation</string>
+    <string name="formulation_name">Formulation Title</string>
+    <string name="formulation_code">Formulation Code</string>
+    <string name="formulation_desc">Description and Use</string>
+    <string name="view_components">Review Components</string>
+    <string name="batch_multiplier">Evaluate Batch Mass (Kg)</string>
+    <string name="quantity_per_ton">Ratio per Ton (1000 Kg)</string>
+    <string name="calculated_quantity">Calculated Weight for Batch</string>
+    
+    <!-- Production run context -->
+    <string name="start_production_run">Start New Production Batch</string>
+    <string name="enter_batch_size">State requested batch size (Kg):</string>
+    <string name="run_steps_instruction">Conclude addition and weighing steps in chronological order to preserve QC bounds:</string>
+    <string name="step_not_done">Awaiting Addition</string>
+    <string name="step_done">Weighed &amp; Added</string>
+    <string name="complete_and_save">Finalize Batch Run (Store in SQLite)</string>
+    <string name="running_recipe">Operating chemical blend: %1$s</string>
+    <string name="batch_size_label">Batch size: %1$s Kg</string>
+    
+    <!-- Logs context -->
+    <string name="production_history">Previous Production Logs (Saved Locally)</string>
+    <string name="no_sessions_yet">No production logs recorded currently.</string>
+
+    <!-- Reports and Settings -->
+    <string name="section_reports">Reports</string>
+    <string name="section_settings">Settings</string>
+    <string name="packaging_settings_title">Packaging &amp; Margins</string>
+    <string name="factory_settings_title">Factory Parameters</string>
+    <string name="users_settings_title">Access Security Accounts</string>
+    <string name="system_info_title">System Diagnostics</string>
+</resources>

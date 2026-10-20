@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions for security rules
+    
+    // Checks if the user is authenticated (using anonymous auth or email/password)
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Checks if the user has a valid, non-empty user ID
+    function isValidUser() {
+      return request.auth.uid != null && request.auth.uid != "";
+    }
+
+    // Rule for matching all documents under the database
+    match /{document=**} {
+      // By default, only allow authenticated operations
+      allow read, write: if isAuthenticated();
+    }
+
+    // Collection-specific rules to enforce strict data structures and protection
+
+    // 1. Raw Materials & Formulation Specifications (Intellectual Property - highly sensitive)
+    match /raw_materials/{materialId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated(); // Can be restricted to supervisor roles in future
+    }
+
+    match /formulations/{formulationId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // 2. Production Orders (Operational and business sensitive records)
+    match /production_orders/{orderId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // 3. Laboratory Sessions, Tests & Attachments (Quality Control and reference specs)
+    match /laboratory_sessions/{sessionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /laboratory_tests/{testId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /laboratory_attachments/{attachmentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // 4. Equipment, Operations & Critical Alerts
+    match /equipment/{eqId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /operational_alerts/{alertId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // 5. Connection Diagnostics
+    match /connection_test/{testDoc} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}

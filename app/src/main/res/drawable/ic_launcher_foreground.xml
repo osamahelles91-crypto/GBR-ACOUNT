@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- الشعار المعتمد داخل المنطقة الآمنة للأيقونة المتكيفة (108dp، المنطقة الآمنة ≈ 66dp). نسبة الصورة 900:464 محفوظة. bitmap بـ gravity=fill ليُقاس ولا يُقصّ -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:width="58dp"
+        android:height="30dp"
+        android:gravity="center">
+        <bitmap
+            android:gravity="fill"
+            android:src="@drawable/img_gbr_logo_about" />
+    </item>
+</layer-list>

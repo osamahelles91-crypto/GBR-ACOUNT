@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- خلفية النافذة (أندرويد 11 فأقل، ولحظة الانتقال في 12+): خلفية بيضاء + نفس صورة الشعار الجاهزة في المنتصف بدون تحجيم (gravity=center) كي لا يُقصّ -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFF" />
+        </shape>
+    </item>
+    <item>
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/splash_logo" />
+    </item>
+</layer-list>

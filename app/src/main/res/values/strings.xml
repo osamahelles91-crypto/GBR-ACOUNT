@@ -1,0 +1,61 @@
+<resources>
+    <string name="app_name">GBR Pro</string>
+    
+    <!-- Authentication -->
+    <string name="login_title">تسجيل الدخول</string>
+    <string name="username_label">اسم المستخدم</string>
+    <string name="password_label">كلمة المرور</string>
+    <string name="login_button">دخول</string>
+    <string name="username_hint">ادخل اسم المستخدم (admin)</string>
+    <string name="password_hint">ادخل كلمة المرور (1234)</string>
+    <string name="logout_button">تسجيل الخروج</string>
+    
+    <!-- Main screen -->
+    <string name="factory_operator_title">لوحة عمل التشغيل والمصنع</string>
+    <string name="section_materials">المواد الخام</string>
+    <string name="section_formulations">التركيبات</string>
+    <string name="section_production_start">الإنتاج</string>
+    
+    <!-- Sub-segments context -->
+    <string name="materials_title">إدارة المواد الخام بالموقع</string>
+    <string name="add_material">إضافة مادة خام جديدة</string>
+    <string name="material_name">اسم المادة الخام</string>
+    <string name="material_code">كود المادة (SKU)</string>
+    <string name="material_unit">الوحدة الافتراضية</string>
+    <string name="save">حفظ</string>
+    <string name="cancel">إلغاء</string>
+    <string name="delete">حذف</string>
+    
+    <!-- Formulation context -->
+    <string name="formulations_title">دليل التركيبات</string>
+    <string name="add_formulation">إضافة تركيبة جديدة</string>
+    <string name="formulation_name">اسم التركيبة</string>
+    <string name="formulation_code">كود التركيبة</string>
+    <string name="formulation_desc">الوصف والاستخدام</string>
+    <string name="view_components">استعراض المكونات</string>
+    <string name="batch_multiplier">حساب كميات وجبة الإنتاج (كجم)</string>
+    <string name="quantity_per_ton">الكمية لكل طن (1000 كجم)</string>
+    <string name="calculated_quantity">الكمية المطلوبة للوجبة الحالية</string>
+    
+    <!-- Production run context -->
+    <string name="start_production_run">تشغيل وجبة إنتاج جديدة</string>
+    <string name="enter_batch_size">حدد وزن الوجبة الكلي المطلوب (كجم):</string>
+    <string name="run_steps_instruction">اتبع خطوات الوزن والإضافة بالتتابع وعلم على الخطوة المنتهية لحماية الجودة:</string>
+    <string name="step_not_done">انتظار الوزن</string>
+    <string name="step_done">تم الوزن والإضافة</string>
+    <string name="complete_and_save">إكمال وإنهاء الوجبة (حفظ في SQLite)</string>
+    <string name="running_recipe">جاري تصنيع خلطة: %1$s</string>
+    <string name="batch_size_label">حجم الوجبة: %1$s كجم</string>
+    
+    <!-- Logs context -->
+    <string name="production_history">سجلات الإنتاج السابقة (تم حفظها محلياً)</string>
+    <string name="no_sessions_yet">لا يوجد وجبات إنتاج مسجلة حالياً.</string>
+
+    <!-- Reports and Settings -->
+    <string name="section_reports">التقارير</string>
+    <string name="section_settings">الإعدادات</string>
+    <string name="packaging_settings_title">العبوات والتغليف</string>
+    <string name="factory_settings_title">إعدادات المصنع</string>
+    <string name="users_settings_title">المستخدمون</string>
+    <string name="system_info_title">معلومات النظام</string>
+</resources>

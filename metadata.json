@@ -1,0 +1,8 @@
+{
+  "name": "Remix GBR Production 22/09",
+  "description": "تطبيق بسيط لمشغل مصنع دهانات GBR لمتابعة المواد الخام، والتركيبات، وبدء التشغيل.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

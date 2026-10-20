@@ -1,0 +1,88 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+
+    - name: Make Gradle wrapper executable
+      run: chmod +x gradlew
+
+    - name: Accept Android SDK Licenses
+      run: |
+        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" || true
+
+    - name: Restore Keystore and Env
+      run: |
+        if [ -f debug.keystore.base64 ]; then
+          base64 -d debug.keystore.base64 > debug.keystore
+          echo "debug.keystore restored from base64"
+        fi
+        if [ ! -f debug.keystore ]; then
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          echo "debug.keystore created via keytool"
+        fi
+        if [ ! -f .env ]; then
+          if [ -f .env.example ]; then
+            cp .env.example .env
+          else
+            touch .env
+          fi
+        fi
+
+    - name: Build Debug APK
+      env:
+        APP_ID_SUFFIX: ".test"
+      run: ./gradlew assembleDebug --no-daemon --max-workers=2 -Dorg.gradle.jvmargs="-Xmx3072m -XX:+UseG1GC"
+
+    - name: Diagnose APK (package, providers, permissions, signer)
+      run: |
+        APK=app/build/outputs/apk/debug/app-debug.apk
+        BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+        {
+          echo "== badging =="; $BT/aapt2 dump badging $APK | grep -E "^package|sdkVersion|targetSdk|application-label:" || true
+          echo "== permissions =="; $BT/aapt2 dump permissions $APK | grep -v "^uses-permission" || true
+          echo "== manifest providers/permissions =="
+          $BT/aapt2 dump xmltree --file AndroidManifest.xml $APK | grep -E "E: (provider|permission)|android:authorities|android:name|sharedUserId|protectionLevel" | grep -B1 -A1 -E "provider|authorities|permission E|E: permission" || true
+          echo "== signer =="; ls $BT | grep -i apksigner || true
+          java -jar $BT/lib/apksigner.jar verify --print-certs $APK 2>&1 | grep -v "Picked up" | head -6 || true
+          echo "expected key SHA256: 47:8A:4F:81:AE:92:72:AC:40:F2:00:C4:17:93:A9:B7:0A:C8:08:AE:E7:60:5A:A5:8C:E9:38:39:82:B2:3A:E7"
+          ls -l $APK
+        } > diag.txt 2>&1
+        cat diag.txt
+        MSG=$(head -c 8000 diag.txt | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\r//g;s/\n/%0A/g')
+        echo "::notice title=APK-DIAG::$MSG"
+
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug-apk
+        path: app/build/outputs/apk/debug/app-debug.apk
+
+    - name: Upload Build Reports on Failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-reports-on-failure
+        path: |
+          app/build/reports/
+          app/build/outputs/logs/
