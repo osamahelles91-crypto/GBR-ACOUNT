@@ -1743,11 +1743,13 @@ fun HomeScreen(viewModel: GbrViewModel) {
             } else if (role == "المختبر") {
                 LaboratoryDashboard(viewModel = viewModel)
             } else if (role == "المخزن") {
-                MaterialsPanel(viewModel = viewModel)
+                // أمين المخزن: وحدة المخزون (فيها تبويب «الكتالوج» لإدارة المواد الخام كما كان)
+                com.example.ui.InventoryPanel(viewModel = viewModel)
             } else if (role == "مدير النظام" || role == "مشرف الإنتاج" || currentUser?.isSupervisor == true) {
                 when (activeSegment) {
                     null -> MainDeckSelector(viewModel = viewModel)
                     "materials" -> MaterialsPanel(viewModel = viewModel)
+                    "inventory" -> com.example.ui.InventoryPanel(viewModel = viewModel)
                     "formulations" -> FormulationsPanel(viewModel = viewModel)
                     "production" -> com.example.ui.ProductionPanel(viewModel = viewModel)
                     "reports" -> ReportsPanel(viewModel = viewModel)
@@ -3077,6 +3079,17 @@ fun MainDeckSelector(viewModel: GbrViewModel) {
                 modifier = Modifier.weight(1f)
             )
         }
+
+        // المخزون (دفتر حركات: مواد خام الآن، والمنتج التام في المراحل القادمة)
+        LargeFacilityButton(
+            title = t("المخزون", "Inventory"),
+            subtitle = t("أرصدة المواد الخام وبطاقة الصنف والتقييم وإعادة الطلب", "Raw-material balances, item card, valuation and reorder"),
+            icon = Icons.Default.Inventory2,
+            isPrimary = false,
+            iconBgColor = Color(0xFFE4F4F0),
+            iconColor = PlusTeal,
+            onClick = { viewModel.showSegment("inventory") }
+        )
 
         // Row 4: إدارة المختبر (Laboratory Management)
         LargeFacilityButton(
