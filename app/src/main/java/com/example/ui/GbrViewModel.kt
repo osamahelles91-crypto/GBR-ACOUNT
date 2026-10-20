@@ -977,6 +977,8 @@ class GbrViewModel(application: Application) : AndroidViewModel(application) {
     init {
         val database = AppDatabase.getDatabase(application)
         repository = GbrRepository(database.gbrDao(), application)
+        // ربط الإنتاج بالمخزون: مراقب مستقل (صرف تلقائي لمواد الأوامر المكتملة؛ لا يغيّر مسارات الإنتاج)
+        try { com.example.data.InventoryProduction.start(application) } catch (e: Exception) { android.util.Log.e("GBR_InvProduction", "start failed", e) }
 
         val syncPrefs = application.getSharedPreferences("gbr_sync_prefs", Context.MODE_PRIVATE)
         val mode = syncPrefs.getString("sync_mode", "realtime") ?: "realtime"

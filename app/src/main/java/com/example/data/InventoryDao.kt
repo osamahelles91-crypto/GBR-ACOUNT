@@ -207,6 +207,12 @@ interface InventoryDao {
     @Query("SELECT * FROM stock_lots WHERE id = :id")
     suspend fun getLot(id: String): StockLot?
 
+    @Query("SELECT * FROM stock_lots WHERE itemId = :itemId")
+    suspend fun getLotsForItem(itemId: String): List<StockLot>
+
+    @Query("SELECT COUNT(*) FROM stock_moves WHERE type = 'ISSUE' AND refDoc = :ref AND itemId = :itemId")
+    suspend fun countIssuesFor(ref: String, itemId: String): Int
+
     @Query("SELECT COUNT(*) FROM stock_lots WHERE lotNo LIKE :prefix || '%'")
     suspend fun countLotsWithPrefix(prefix: String): Int
 

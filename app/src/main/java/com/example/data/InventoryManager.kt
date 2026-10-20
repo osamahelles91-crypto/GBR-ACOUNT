@@ -23,6 +23,7 @@ object InventoryTypes {
     const val RECEIPT = "RECEIPT"
     const val RELEASE = "RELEASE"
     const val REJECT = "REJECT"
+    const val ISSUE = "ISSUE"
 }
 
 /** أكواد أسباب التسوية (إلزامية). */
@@ -412,6 +413,29 @@ object InventoryManager {
         d.upsertLot(lot.copy(status = "REJECTED", notes = (lot.notes + " | رفض: " + reason.trim()).trim(' ', '|'), updatedAt = System.currentTimeMillis(), isPending = true))
         InventorySync.uploadPendingAsync(ctx)
         return if (ok) OpResult(true, "رُفضت الدفعة ${lot.lotNo}") else OpResult(true, "الدفعة مرفوضة مسبقاً")
+    }
+
+    /** صرف للإنتاج: من المخزن الرئيسي إلى V_PRODUCTION. يُسمح بالرصيد السالب (الإنتاج وقع فعلاً) وتُعلَّم الفروقات في التدقيق. */
+    suspend fun issueToProduction(
+        ctx: Context, itemId: String, lotId: String?, qty: Long, uom: String, orderId: String, userId: String, idKey: String
+    ): Boolean = write(
+        ctx,
+        newMove(ctx, itemId, lotId, InventoryIds.LOC_MAIN, InventoryIds.V_PRODUCTION, qty, uom,
+            InventoryTypes.ISSUE, "PRODUCTION", "ORD:" + orderId, null, userId, id = deterministicId(idKey))
+    )
+
+    /** يعكس كل حركات صرف أمر إنتاج لم تُعكس بعد (يدوياً من التدقيق بعد إلغاء/حذف الأمر). */
+    suspend fun reverseOrderIssues(ctx: Context, orderId: String, userId: String): OpResult {
+        val d = dao(ctx)
+        val all = d.getAllMovesSync()
+        val reversed = all.mapNotNull { it.reversesMoveId }.toSet()
+        val targets = all.filter { it.type == InventoryTypes.ISSUE && it.refDoc == "ORD:" + orderId && it.moveId !in reversed }
+        if (targets.isEmpty()) return OpResult(false, "لا صرف قائم لهذا الأمر")
+        var done = 0
+        for (m in targets) {
+            if (reverse(ctx, m.moveId, "إلغاء/حذف أمر الإنتاج", userId).ok) done++
+        }
+        return OpResult(done > 0, "عُكست $done من ${targets.size} حركة صرف")
     }
 
     // ---------- حفظ السجلات الرئيسة ----------
